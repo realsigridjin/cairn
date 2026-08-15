@@ -10,6 +10,7 @@ use axum::{
         header::{AUTHORIZATION, WWW_AUTHENTICATE},
         HeaderMap, HeaderValue, StatusCode,
     },
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -120,7 +121,21 @@ struct ApiErrorBody {
     request_id: Option<String>,
 }
 
-type ApiRejection = (StatusCode, HeaderMap, Json<ApiErrorEnvelope>);
+struct ApiRejection {
+    inner: Box<(StatusCode, HeaderMap, Json<ApiErrorEnvelope>)>,
+}
+
+impl ApiRejection {
+    fn headers_mut(&mut self) -> &mut HeaderMap {
+        &mut self.inner.1
+    }
+}
+
+impl IntoResponse for ApiRejection {
+    fn into_response(self) -> Response {
+        self.inner.into_response()
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub struct KnowledgeBaseHeadResponse {
@@ -329,7 +344,7 @@ fn authorize(
         false,
         request_id,
     );
-    rejection.1.insert(
+    rejection.headers_mut().insert(
         WWW_AUTHENTICATE,
         HeaderValue::from_static(r#"Bearer realm="cairn""#),
     );
@@ -352,7 +367,9 @@ fn secure_token_eq(expected_digest: &[u8; 32], candidate: &str) -> bool {
     expected_digest
         .iter()
         .zip(candidate_digest.iter())
-        .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
         == 0
 }
 
@@ -406,23 +423,26 @@ fn api_error(
     retryable: bool,
     request_id: Option<String>,
 ) -> ApiRejection {
-    (
-        status,
-        HeaderMap::new(),
-        Json(ApiErrorEnvelope {
-            error: ApiErrorBody {
-                code,
-                message,
-                retryable,
-                request_id,
-            },
-        }),
-    )
+    ApiRejection {
+        inner: Box::new((
+            status,
+            HeaderMap::new(),
+            Json(ApiErrorEnvelope {
+                error: ApiErrorBody {
+                    code,
+                    message,
+                    retryable,
+                    request_id,
+                },
+            }),
+        )),
+    }
 }
 
 fn classify_runtime_error(error: anyhow::Error, request_id: Option<String>) -> ApiRejection {
     let message = error.to_string();
-    let (status, code, public_message, retryable) = if message.contains("knowledge base has no HEAD")
+    let (status, code, public_message, retryable) = if message
+        .contains("knowledge base has no HEAD")
         || message.contains("manifest not found")
     {
         (
@@ -483,8 +503,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_bearer_token, safe_correlation_header, secure_token_eq, token_digest,
-        ServerOptions, ServerScope,
+        parse_bearer_token, safe_correlation_header, secure_token_eq, token_digest, ServerOptions,
+        ServerScope,
     };
     use anyhow::Result;
     use axum::http::{HeaderMap, HeaderValue};

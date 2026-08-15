@@ -37,12 +37,19 @@ pub struct HeatTracker {
 }
 
 impl HeatTracker {
-    pub fn new(policy: HeatPolicy) -> Self { Self { policy, inner: Mutex::new(HashMap::new()) } }
+    pub fn new(policy: HeatPolicy) -> Self {
+        Self {
+            policy,
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
 
     pub fn record_query(&self, key: &str, remote_bytes: u64, object_size: u64) -> bool {
         let now = Instant::now();
         let mut g = self.inner.lock();
-        if g.len() >= self.policy.max_entries && !g.contains_key(key) { prune(&mut g, now, self.policy.window, self.policy.max_entries); }
+        if g.len() >= self.policy.max_entries && !g.contains_key(key) {
+            prune(&mut g, now, self.policy.window, self.policy.max_entries);
+        }
         let h = g.entry(key.to_string()).or_insert(Heat {
             started: now,
             touched: now,
@@ -51,7 +58,13 @@ impl HeatTracker {
             object_size,
         });
         if now.duration_since(h.started) > self.policy.window {
-            *h = Heat { started: now, touched: now, queries: 0, remote_bytes: 0, object_size };
+            *h = Heat {
+                started: now,
+                touched: now,
+                queries: 0,
+                remote_bytes: 0,
+                object_size,
+            };
         }
         h.touched = now;
         h.queries = h.queries.saturating_add(1);
@@ -64,23 +77,31 @@ impl HeatTracker {
         let now = Instant::now();
         let g = self.inner.lock();
         let Some(h) = g.get(key) else { return false };
-        if now.duration_since(h.started) > self.policy.window { return false }
+        if now.duration_since(h.started) > self.policy.window {
+            return false;
+        }
         self.promoted(h)
     }
 
     fn promoted(&self, h: &Heat) -> bool {
         h.queries >= self.policy.min_queries
-            || (h.object_size > 0 && (h.remote_bytes as f64 / h.object_size as f64) >= self.policy.remote_bytes_fraction)
+            || (h.object_size > 0
+                && (h.remote_bytes as f64 / h.object_size as f64)
+                    >= self.policy.remote_bytes_fraction)
     }
 }
 
 fn prune(g: &mut HashMap<String, Heat>, now: Instant, window: Duration, max_entries: usize) {
     g.retain(|_, h| now.duration_since(h.touched) <= window);
-    if g.len() < max_entries { return }
+    if g.len() < max_entries {
+        return;
+    }
     let mut oldest: Vec<_> = g.iter().map(|(k, h)| (h.touched, k.clone())).collect();
     oldest.sort_by_key(|x| x.0);
     let target = max_entries.saturating_mul(9) / 10;
-    for (_, key) in oldest.into_iter().take(g.len().saturating_sub(target)) { g.remove(&key); }
+    for (_, key) in oldest.into_iter().take(g.len().saturating_sub(target)) {
+        g.remove(&key);
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +110,12 @@ mod tests {
 
     #[test]
     fn probes_do_not_increment_heat() {
-        let tracker = HeatTracker::new(HeatPolicy { window: Duration::from_secs(60), min_queries: 2, remote_bytes_fraction: 2.0, max_entries: 100 });
+        let tracker = HeatTracker::new(HeatPolicy {
+            window: Duration::from_secs(60),
+            min_queries: 2,
+            remote_bytes_fraction: 2.0,
+            max_entries: 100,
+        });
         assert!(!tracker.should_promote("k"));
         assert!(!tracker.record_query("k", 0, 100));
         assert!(!tracker.should_promote("k"));

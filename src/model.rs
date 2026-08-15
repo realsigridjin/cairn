@@ -18,7 +18,12 @@ pub struct Calibration {
 }
 
 impl Default for Calibration {
-    fn default() -> Self { Self { slope: 1.0, intercept: 0.0 } }
+    fn default() -> Self {
+        Self {
+            slope: 1.0,
+            intercept: 0.0,
+        }
+    }
 }
 
 impl Calibration {
@@ -36,7 +41,10 @@ impl Calibration {
     }
 
     pub fn validate(&self, name: &str) -> anyhow::Result<()> {
-        anyhow::ensure!(self.slope.is_finite() && self.intercept.is_finite(), "{name} calibration must be finite");
+        anyhow::ensure!(
+            self.slope.is_finite() && self.intercept.is_finite(),
+            "{name} calibration must be finite"
+        );
         Ok(())
     }
 }
@@ -50,8 +58,14 @@ pub struct SignalCalibrations {
 impl Default for SignalCalibrations {
     fn default() -> Self {
         Self {
-            lexical: Calibration { slope: 0.5, intercept: -2.0 },
-            vector: Calibration { slope: 8.0, intercept: -4.0 },
+            lexical: Calibration {
+                slope: 0.5,
+                intercept: -2.0,
+            },
+            vector: Calibration {
+                slope: 8.0,
+                intercept: -4.0,
+            },
         }
     }
 }
@@ -114,13 +128,28 @@ impl Default for GlobalScoringContext {
 
 impl GlobalScoringContext {
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.base_rate.is_finite() && self.base_rate > 0.0 && self.base_rate < 1.0, "base_rate must be in (0,1)");
-        anyhow::ensure!(self.bm25_k1.is_finite() && self.bm25_k1 >= 0.0, "bm25_k1 must be finite and non-negative");
-        anyhow::ensure!(self.bm25_b.is_finite() && (0.0..=1.0).contains(&self.bm25_b), "bm25_b must be in [0,1]");
+        anyhow::ensure!(
+            self.base_rate.is_finite() && self.base_rate > 0.0 && self.base_rate < 1.0,
+            "base_rate must be in (0,1)"
+        );
+        anyhow::ensure!(
+            self.bm25_k1.is_finite() && self.bm25_k1 >= 0.0,
+            "bm25_k1 must be finite and non-negative"
+        );
+        anyhow::ensure!(
+            self.bm25_b.is_finite() && (0.0..=1.0).contains(&self.bm25_b),
+            "bm25_b must be in [0,1]"
+        );
         self.cold.validate("cold")?;
         self.warm.validate("warm")?;
-        anyhow::ensure!(self.lexical_weight.is_finite() && (0.0..=8.0).contains(&self.lexical_weight), "lexical_weight must be in [0,8]");
-        anyhow::ensure!(self.vector_weight.is_finite() && (0.0..=8.0).contains(&self.vector_weight), "vector_weight must be in [0,8]");
+        anyhow::ensure!(
+            self.lexical_weight.is_finite() && (0.0..=8.0).contains(&self.lexical_weight),
+            "lexical_weight must be in [0,8]"
+        );
+        anyhow::ensure!(
+            self.vector_weight.is_finite() && (0.0..=8.0).contains(&self.vector_weight),
+            "vector_weight must be in [0,8]"
+        );
         Ok(())
     }
 
@@ -154,16 +183,45 @@ pub struct RevisionStats {
 
 impl RevisionStats {
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.schema_version == 3, "unsupported revision stats schema {} (expected 3)", self.schema_version);
-        anyhow::ensure!(self.live_document_count > 0, "revision stats require at least one live document");
-        anyhow::ensure!(self.live_document_count <= u32::MAX as u64, "cold BM25 currently supports at most u32::MAX live documents");
-        anyhow::ensure!(self.average_document_length.is_finite() && self.average_document_length > 0.0, "average_document_length must be positive and finite");
-        anyhow::ensure!(self.corpus_sha256.len() == 64 && self.corpus_sha256.bytes().all(|b| b.is_ascii_hexdigit()), "invalid corpus SHA-256");
-        anyhow::ensure!(!self.analyzer.is_empty() && self.analyzer.len() <= 128, "invalid cold analyzer identifier");
-        anyhow::ensure!(!self.warm_analyzer.is_empty() && self.warm_analyzer.len() <= 128, "invalid warm analyzer identifier");
+        anyhow::ensure!(
+            self.schema_version == 3,
+            "unsupported revision stats schema {} (expected 3)",
+            self.schema_version
+        );
+        anyhow::ensure!(
+            self.live_document_count > 0,
+            "revision stats require at least one live document"
+        );
+        anyhow::ensure!(
+            self.live_document_count <= u32::MAX as u64,
+            "cold BM25 currently supports at most u32::MAX live documents"
+        );
+        anyhow::ensure!(
+            self.average_document_length.is_finite() && self.average_document_length > 0.0,
+            "average_document_length must be positive and finite"
+        );
+        anyhow::ensure!(
+            self.corpus_sha256.len() == 64
+                && self.corpus_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "invalid corpus SHA-256"
+        );
+        anyhow::ensure!(
+            !self.analyzer.is_empty() && self.analyzer.len() <= 128,
+            "invalid cold analyzer identifier"
+        );
+        anyhow::ensure!(
+            !self.warm_analyzer.is_empty() && self.warm_analyzer.len() <= 128,
+            "invalid warm analyzer identifier"
+        );
         for (term, df) in &self.term_df {
-            anyhow::ensure!(!term.is_empty() && term.len() <= 4096, "invalid term in revision stats");
-            anyhow::ensure!(*df > 0 && *df as u64 <= self.live_document_count, "invalid df for term {term}");
+            anyhow::ensure!(
+                !term.is_empty() && term.len() <= 4096,
+                "invalid term in revision stats"
+            );
+            anyhow::ensure!(
+                *df > 0 && *df as u64 <= self.live_document_count,
+                "invalid df for term {term}"
+            );
         }
         self.scoring.validate()
     }
@@ -202,28 +260,60 @@ impl SearchRequest {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.limit > 0 && self.limit <= 1_000, "limit must be in 1..=1000");
-        anyhow::ensure!(self.candidate_limit >= self.limit && self.candidate_limit <= 100_000, "candidate_limit must be >= limit and <= 100000");
+        anyhow::ensure!(
+            self.limit > 0 && self.limit <= 1_000,
+            "limit must be in 1..=1000"
+        );
+        anyhow::ensure!(
+            self.candidate_limit >= self.limit && self.candidate_limit <= 100_000,
+            "candidate_limit must be >= limit and <= 100000"
+        );
         anyhow::ensure!(self.query.len() <= 16 * 1024, "query text too large");
         anyhow::ensure!(self.query_vector.len() <= 65_536, "query vector too large");
-        anyhow::ensure!(self.query_vector.iter().all(|x| x.is_finite()), "query vector contains non-finite value");
+        anyhow::ensure!(
+            self.query_vector.iter().all(|x| x.is_finite()),
+            "query vector contains non-finite value"
+        );
         anyhow::ensure!(self.filters.len() <= 64, "too many metadata filters");
-        anyhow::ensure!((1024 * 1024..=4 * 1024 * 1024 * 1024u64).contains(&self.max_remote_bytes), "max_remote_bytes must be in 1MiB..=4GiB");
-        anyhow::ensure!((16..=100_000).contains(&self.max_range_reads), "max_range_reads must be in 16..=100000");
+        anyhow::ensure!(
+            (1024 * 1024..=4 * 1024 * 1024 * 1024u64).contains(&self.max_remote_bytes),
+            "max_remote_bytes must be in 1MiB..=4GiB"
+        );
+        anyhow::ensure!(
+            (16..=100_000).contains(&self.max_range_reads),
+            "max_range_reads must be in 16..=100000"
+        );
         for (k, v) in &self.filters {
-            anyhow::ensure!(!k.is_empty() && k.len() <= 256, "invalid metadata filter key");
+            anyhow::ensure!(
+                !k.is_empty() && k.len() <= 256,
+                "invalid metadata filter key"
+            );
             let encoded = serde_json::to_vec(v)?;
-            anyhow::ensure!(encoded.len() <= 64 * 1024, "metadata filter value too large");
+            anyhow::ensure!(
+                encoded.len() <= 64 * 1024,
+                "metadata filter value too large"
+            );
         }
-        anyhow::ensure!(!self.query.trim().is_empty() || !self.query_vector.is_empty(), "search requires a text query, query vector, or both");
+        anyhow::ensure!(
+            !self.query.trim().is_empty() || !self.query_vector.is_empty(),
+            "search requires a text query, query vector, or both"
+        );
         Ok(())
     }
 }
 
-fn default_limit() -> usize { 20 }
-fn default_candidates() -> usize { 200 }
-fn default_max_remote_bytes() -> u64 { 256 * 1024 * 1024 }
-fn default_max_range_reads() -> u64 { 4096 }
+fn default_limit() -> usize {
+    20
+}
+fn default_candidates() -> usize {
+    200
+}
+fn default_max_remote_bytes() -> u64 {
+    256 * 1024 * 1024
+}
+fn default_max_range_reads() -> u64 {
+    4096
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
@@ -261,7 +351,10 @@ pub struct SearchResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SearchMode { Cold, Warm }
+pub enum SearchMode {
+    Cold,
+    Warm,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

@@ -1,7 +1,14 @@
-use crate::{embedding::EmbeddingSettings, object_store::{HttpStore, LocalStore, ObjectStore}};
+use crate::{
+    embedding::EmbeddingSettings,
+    object_store::{HttpStore, LocalStore, ObjectStore},
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{env, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 pub const DEFAULT_CONFIG_PATH: &str = ".cairn/config.toml";
@@ -53,9 +60,12 @@ enum StoreSelection {
 
 impl CairnConfig {
     pub fn load(path: Option<&Path>) -> Result<(Self, Option<PathBuf>)> {
-        let explicit = path.map(Path::to_path_buf)
+        let explicit = path
+            .map(Path::to_path_buf)
             .or_else(|| env::var_os("CAIRN_CONFIG").map(PathBuf::from));
-        let candidate = explicit.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH));
+        let candidate = explicit
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH));
         if !candidate.exists() {
             if explicit.is_some() {
                 bail!("config file does not exist: {}", candidate.display());
@@ -71,22 +81,32 @@ impl CairnConfig {
             .read_to_string(&mut raw)
             .with_context(|| format!("read config {}", candidate.display()))?;
         if raw.len() as u64 > MAX_CONFIG_BYTES {
-            bail!("config file exceeds {MAX_CONFIG_BYTES} bytes: {}", candidate.display())
+            bail!(
+                "config file exceeds {MAX_CONFIG_BYTES} bytes: {}",
+                candidate.display()
+            )
         }
         let mut config: Self = toml::from_str(&raw)
             .with_context(|| format!("parse config {}", candidate.display()))?;
         config.validate()?;
-        let base = candidate.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let base = candidate
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         config.resolve_relative_paths(base);
         Ok((config, Some(candidate)))
     }
 
     fn resolve_relative_paths(&mut self, base: &Path) {
         if let Some(path) = self.store.local.as_mut() {
-            if path.is_relative() { *path = base.join(&*path); }
+            if path.is_relative() {
+                *path = base.join(&*path);
+            }
         }
         if let Some(path) = self.defaults.cache.as_mut() {
-            if path.is_relative() { *path = base.join(&*path); }
+            if path.is_relative() {
+                *path = base.join(&*path);
+            }
         }
     }
 
@@ -126,11 +146,15 @@ impl CairnConfig {
         // `--local-store` must be able to replace an object_gateway from config
         // without forcing developers to edit the config first.
         let selected = match (&overrides.local, &overrides.object_gateway) {
-            (Some(_), Some(_)) => bail!("select either a local store or an object gateway, not both"),
+            (Some(_), Some(_)) => {
+                bail!("select either a local store or an object gateway, not both")
+            }
             (Some(path), None) => StoreSelection::Local(path.clone()),
             (None, Some(url)) => StoreSelection::Gateway(url.clone()),
             (None, None) => match (&self.store.local, &self.store.object_gateway) {
-                (Some(_), Some(_)) => bail!("config.store must select either local or object_gateway, not both"),
+                (Some(_), Some(_)) => {
+                    bail!("config.store must select either local or object_gateway, not both")
+                }
                 (Some(path), None) => StoreSelection::Local(path.clone()),
                 (None, Some(url)) => StoreSelection::Gateway(url.clone()),
                 (None, None) => StoreSelection::Local(PathBuf::from(DEFAULT_LOCAL_STORE)),
@@ -139,20 +163,30 @@ impl CairnConfig {
         match selected {
             StoreSelection::Local(path) => Ok(Arc::new(LocalStore::new(path))),
             StoreSelection::Gateway(url) => {
-                let env_name = overrides.bearer_env.as_deref()
+                let env_name = overrides
+                    .bearer_env
+                    .as_deref()
                     .or(self.store.bearer_env.as_deref())
                     .unwrap_or(DEFAULT_BEARER_ENV);
                 validate_env_name(env_name)?;
                 let bearer = env::var(env_name).ok().filter(|value| !value.is_empty());
                 Ok(Arc::new(HttpStore::new(url, bearer)?))
-            },
+            }
         }
     }
 }
 
-pub fn write_default_config(path: &Path, tenant: Option<&str>, kb: Option<&str>, force: bool) -> Result<CairnConfig> {
+pub fn write_default_config(
+    path: &Path,
+    tenant: Option<&str>,
+    kb: Option<&str>,
+    force: bool,
+) -> Result<CairnConfig> {
     if path.exists() && !force {
-        bail!("config already exists at {}; pass --force to replace it", path.display());
+        bail!(
+            "config already exists at {}; pass --force to replace it",
+            path.display()
+        );
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
@@ -178,7 +212,10 @@ pub fn write_default_config(path: &Path, tenant: Option<&str>, kb: Option<&str>,
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
     use std::io::Write as _;
@@ -196,12 +233,15 @@ pub fn sync_directory(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-pub fn sync_directory(_path: &Path) -> Result<()> { Ok(()) }
-
+pub fn sync_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
 
 fn validate_service_url(name: &str, raw: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(raw).with_context(|| format!("{name} is not a valid URL"))?;
-    let host = parsed.host_str().with_context(|| format!("{name} must include a host"))?;
+    let host = parsed
+        .host_str()
+        .with_context(|| format!("{name} must include a host"))?;
     let local_http = parsed.scheme() == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1");
     if parsed.scheme() != "https" && !local_http {
         bail!("{name} must use https:// (plain http is allowed only for localhost)")
@@ -219,7 +259,12 @@ pub fn validate_env_name(name: &str) -> Result<()> {
     let valid = !name.is_empty()
         && name.len() <= 128
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        && name.as_bytes().first().is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_');
-    if !valid { bail!("invalid bearer environment variable name: {name}") }
+        && name
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_');
+    if !valid {
+        bail!("invalid bearer environment variable name: {name}")
+    }
     Ok(())
 }

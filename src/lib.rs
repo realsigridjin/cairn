@@ -3,13 +3,12 @@
 #![warn(clippy::all, clippy::unwrap_used, clippy::expect_used)]
 #![allow(clippy::module_name_repetitions)]
 
-
 pub mod binary;
 pub mod cache;
-pub mod config;
 pub mod compaction;
-pub mod heat;
+pub mod config;
 pub mod embedding;
+pub mod heat;
 pub mod index;
 pub mod manifest;
 pub mod model;

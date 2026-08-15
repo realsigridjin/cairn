@@ -49,8 +49,16 @@ async fn local_store_create_only_is_serialized_across_instances() -> anyhow::Res
     let left = LocalStore::new(dir.path());
     let right = LocalStore::new(dir.path());
     let (a, b) = tokio::join!(
-        left.put("cas/value", Bytes::from_static(b"a"), PutCondition::CreateOnly),
-        right.put("cas/value", Bytes::from_static(b"b"), PutCondition::CreateOnly),
+        left.put(
+            "cas/value",
+            Bytes::from_static(b"a"),
+            PutCondition::CreateOnly
+        ),
+        right.put(
+            "cas/value",
+            Bytes::from_static(b"b"),
+            PutCondition::CreateOnly
+        ),
     );
     let successes = [a?, b?].into_iter().filter(Option::is_some).count();
     assert_eq!(successes, 1);

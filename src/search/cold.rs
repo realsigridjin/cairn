@@ -1,7 +1,10 @@
-use crate::binary::{decode_block, decode_block_raw, decode_directory, Directory, Header, HEADER_SIZE, MAX_BLOCK_RAW, MAX_COMPRESSED_BLOCK_BYTES, MAX_DIRECTORY_BYTES};
-use crate::index::{IdRecord, PayloadRecord, ShardMeta};
+use crate::binary::{
+    decode_block, decode_block_raw, decode_directory, Directory, Header, HEADER_SIZE,
+    MAX_BLOCK_RAW, MAX_COMPRESSED_BLOCK_BYTES, MAX_DIRECTORY_BYTES,
+};
 use crate::index::lexical::{bm25, query_terms, PostingList};
 use crate::index::vector::{approx_dot, normalize, top_centroids, IvfList, Router};
+use crate::index::{IdRecord, PayloadRecord, ShardMeta};
 use crate::manifest::ShardDescriptor;
 use crate::model::{RevisionStats, SearchHit, SearchRequest};
 use crate::object_store::ObjectStore;
@@ -10,7 +13,10 @@ use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 const MAX_QUERY_TERMS: usize = 256;
 const MAX_CONCURRENT_RANGE_READS: usize = 16;
@@ -38,10 +44,16 @@ async fn decode_block_raw_async(block: crate::binary::BlockRef, bytes: Bytes) ->
 }
 
 #[derive(Debug, Default)]
-pub struct IoStats { pub bytes: AtomicU64, pub reads: AtomicU64 }
+pub struct IoStats {
+    pub bytes: AtomicU64,
+    pub reads: AtomicU64,
+}
 impl IoStats {
     pub fn snapshot(&self) -> (u64, u64) {
-        (self.bytes.load(Ordering::Relaxed), self.reads.load(Ordering::Relaxed))
+        (
+            self.bytes.load(Ordering::Relaxed),
+            self.reads.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -55,7 +67,12 @@ pub struct RemoteBudget {
 
 impl RemoteBudget {
     pub fn new(max_bytes: u64, max_reads: u64) -> Self {
-        Self { max_bytes, max_reads, bytes: AtomicU64::new(0), reads: AtomicU64::new(0) }
+        Self {
+            max_bytes,
+            max_reads,
+            bytes: AtomicU64::new(0),
+            reads: AtomicU64::new(0),
+        }
     }
 
     pub fn charge(&self, bytes: u64, reads: u64) -> Result<()> {
@@ -71,8 +88,12 @@ impl RemoteBudget {
 fn reserve(counter: &AtomicU64, amount: u64, limit: u64, label: &str) -> Result<()> {
     let mut current = counter.load(Ordering::Acquire);
     loop {
-        let next = current.checked_add(amount).context("remote budget overflow")?;
-        if next > limit { bail!("{label} budget exceeded: {next} > {limit}") }
+        let next = current
+            .checked_add(amount)
+            .context("remote budget overflow")?;
+        if next > limit {
+            bail!("{label} budget exceeded: {next} > {limit}")
+        }
         match counter.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => return Ok(()),
             Err(actual) => current = actual,
@@ -96,31 +117,59 @@ pub struct ColdShardReader {
 
 impl ColdShardReader {
     pub fn new(store: Arc<dyn ObjectStore>, shard: ShardDescriptor) -> Self {
-        Self::new_with_budget(store, shard, Arc::new(RemoteBudget::new(u64::MAX, u64::MAX)))
+        Self::new_with_budget(
+            store,
+            shard,
+            Arc::new(RemoteBudget::new(u64::MAX, u64::MAX)),
+        )
     }
 
-    pub fn new_with_budget(store: Arc<dyn ObjectStore>, shard: ShardDescriptor, budget: Arc<RemoteBudget>) -> Self {
-        Self { store, shard, budget, stats: Arc::new(IoStats::default()) }
+    pub fn new_with_budget(
+        store: Arc<dyn ObjectStore>,
+        shard: ShardDescriptor,
+        budget: Arc<RemoteBudget>,
+    ) -> Self {
+        Self {
+            store,
+            shard,
+            budget,
+            stats: Arc::new(IoStats::default()),
+        }
     }
 
     async fn range(&self, offset: u64, len: u64) -> Result<Bytes> {
         let end = offset.checked_add(len).context("range overflow")?;
-        if end > self.shard.size { bail!("range exceeds declared shard size") }
+        if end > self.shard.size {
+            bail!("range exceeds declared shard size")
+        }
         self.budget.charge(len, 1)?;
         let b = self.store.get_range(&self.shard.key, offset, len).await?;
         self.stats.reads.fetch_add(1, Ordering::Relaxed);
-        self.stats.bytes.fetch_add(b.len() as u64, Ordering::Relaxed);
+        self.stats
+            .bytes
+            .fetch_add(b.len() as u64, Ordering::Relaxed);
         Ok(b)
     }
 
     pub async fn open_directory(&self) -> Result<(Header, Directory)> {
-        if self.shard.format_version != crate::binary::FORMAT_VERSION { bail!("unsupported shard descriptor format") }
+        if self.shard.format_version != crate::binary::FORMAT_VERSION {
+            bail!("unsupported shard descriptor format")
+        }
         let hbytes = self.range(0, HEADER_SIZE as u64).await?;
         let header = Header::decode(&hbytes)?;
-        if header.directory_sha256_hex() != self.shard.directory_sha256 { bail!("manifest/header directory digest mismatch") }
-        if header.dir_len == 0 || header.dir_len > MAX_DIRECTORY_BYTES { bail!("invalid directory size {}", header.dir_len) }
-        let dir_end = header.dir_offset.checked_add(header.dir_len).context("directory range overflow")?;
-        if dir_end != self.shard.size { bail!("directory does not terminate declared shard") }
+        if header.directory_sha256_hex() != self.shard.directory_sha256 {
+            bail!("manifest/header directory digest mismatch")
+        }
+        if header.dir_len == 0 || header.dir_len > MAX_DIRECTORY_BYTES {
+            bail!("invalid directory size {}", header.dir_len)
+        }
+        let dir_end = header
+            .dir_offset
+            .checked_add(header.dir_len)
+            .context("directory range overflow")?;
+        if dir_end != self.shard.size {
+            bail!("directory does not terminate declared shard")
+        }
         let db = self.range(header.dir_offset, header.dir_len).await?;
         let dir = decode_directory_async(header, db).await?;
         dir.validate_layout(self.shard.size, header.dir_offset, header.dir_len)?;
@@ -132,7 +181,9 @@ impl ColdShardReader {
         T: serde::de::DeserializeOwned + Send + 'static,
     {
         let br = dir.get(kind, key)?.clone();
-        if br.len > MAX_COMPRESSED_BLOCK_BYTES { bail!("compressed block too large: {}", br.len) }
+        if br.len > MAX_COMPRESSED_BLOCK_BYTES {
+            bail!("compressed block too large: {}", br.len)
+        }
         let bytes = self.range(br.offset, br.len).await?;
         decode_block_async(br, bytes).await
     }
@@ -145,13 +196,22 @@ impl ColdShardReader {
         Ok(OpenedColdShard { directory, meta })
     }
 
-    pub fn score_upper_bound_opened(&self, opened: &OpenedColdShard, req: &SearchRequest, stats: &RevisionStats) -> Result<f32> {
+    pub fn score_upper_bound_opened(
+        &self,
+        opened: &OpenedColdShard,
+        req: &SearchRequest,
+        stats: &RevisionStats,
+    ) -> Result<f32> {
         let meta = &opened.meta;
         let terms = checked_query_terms(&req.query)?;
         let mut lexical_raw = 0.0f32;
         for term in terms {
-            let Some(bound) = meta.term_bounds.get(&term) else { continue };
-            let Some(df) = stats.term_df.get(&term) else { continue };
+            let Some(bound) = meta.term_bounds.get(&term) else {
+                continue;
+            };
+            let Some(df) = stats.term_df.get(&term) else {
+                continue;
+            };
             lexical_raw += bm25(
                 bound.max_tf,
                 bound.min_doc_len,
@@ -163,13 +223,33 @@ impl ColdShardReader {
             );
         }
         let lexical = if lexical_raw > 0.0 {
-            let lo = stats.scoring.cold.lexical.evidence_llr(0.0, stats.scoring.base_rate);
-            let hi = stats.scoring.cold.lexical.evidence_llr(lexical_raw, stats.scoring.base_rate);
+            let lo = stats
+                .scoring
+                .cold
+                .lexical
+                .evidence_llr(0.0, stats.scoring.base_rate);
+            let hi = stats
+                .scoring
+                .cold
+                .lexical
+                .evidence_llr(lexical_raw, stats.scoring.base_rate);
             modality_upper_bound(lo, hi, stats.scoring.lexical_weight)
-        } else { 0.0 };
-        let vector = if req.query_vector.is_empty() { 0.0 } else {
-            let lo = stats.scoring.cold.vector.evidence_llr(-1.0, stats.scoring.base_rate);
-            let hi = stats.scoring.cold.vector.evidence_llr(1.0, stats.scoring.base_rate);
+        } else {
+            0.0
+        };
+        let vector = if req.query_vector.is_empty() {
+            0.0
+        } else {
+            let lo = stats
+                .scoring
+                .cold
+                .vector
+                .evidence_llr(-1.0, stats.scoring.base_rate);
+            let hi = stats
+                .scoring
+                .cold
+                .vector
+                .evidence_llr(1.0, stats.scoring.base_rate);
             modality_upper_bound(lo, hi, stats.scoring.vector_weight)
         };
         Ok(crate::model::logit(stats.scoring.base_rate) + lexical + vector)
@@ -186,20 +266,38 @@ impl ColdShardReader {
         let dir = &opened.directory;
         let meta = &opened.meta;
         if !req.query_vector.is_empty() && req.query_vector.len() != meta.dimension as usize {
-            bail!("query vector dimension {}, expected {}", req.query_vector.len(), meta.dimension)
+            bail!(
+                "query vector dimension {}, expected {}",
+                req.query_vector.len(),
+                meta.dimension
+            )
         }
         let terms = checked_query_terms(&req.query)?;
         let lexical = self.lexical(dir, meta, &terms, stats).await?;
         let vector = if !req.query_vector.is_empty() {
-            let approx = self.vector(dir, meta, &req.query_vector, nprobe, req.candidate_limit).await?;
-            self.exact_vector_evidence(dir, meta, &req.query_vector, approx.into_iter().map(|x| x.0).collect(), stats).await?
-        } else { Vec::new() };
+            let approx = self
+                .vector(dir, meta, &req.query_vector, nprobe, req.candidate_limit)
+                .await?;
+            self.exact_vector_evidence(
+                dir,
+                meta,
+                &req.query_vector,
+                approx.into_iter().map(|x| x.0).collect(),
+                stats,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
         let evidence = merge_evidence(lexical, vector);
-        let mut ranked: Vec<_> = evidence.into_iter().map(|(doc_idx, e)| {
-            let logit = e.fused_logit(&stats.scoring);
-            let post = e.posterior(&stats.scoring);
-            (doc_idx, e, logit, post)
-        }).collect();
+        let mut ranked: Vec<_> = evidence
+            .into_iter()
+            .map(|(doc_idx, e)| {
+                let logit = e.fused_logit(&stats.scoring);
+                let post = e.posterior(&stats.scoring);
+                (doc_idx, e, logit, post)
+            })
+            .collect();
         ranked.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
         // Tombstones are correctness semantics, not a best-effort metadata filter.
@@ -209,7 +307,13 @@ impl ColdShardReader {
         // tombstoned candidates before applying the pool bound without fetching
         // full payload text/metadata.
         let ranked = self
-            .retain_live_candidates(dir, meta, ranked, excluded_ids, req.effective_candidate_limit())
+            .retain_live_candidates(
+                dir,
+                meta,
+                ranked,
+                excluded_ids,
+                req.effective_candidate_limit(),
+            )
             .await?;
         let payloads = self.payloads(dir, meta, ranked.iter().map(|x| x.0)).await?;
         let mut hits = Vec::with_capacity(req.limit.max(1));
@@ -225,7 +329,9 @@ impl ColdShardReader {
                         text: p.text.clone(),
                         metadata: p.metadata.clone(),
                     });
-                    if hits.len() >= req.limit.max(1) { break }
+                    if hits.len() >= req.limit.max(1) {
+                        break;
+                    }
                 }
             }
         }
@@ -249,10 +355,14 @@ impl ColdShardReader {
         for batch in ranked.chunks(batch_size) {
             let ids = self.ids(dir, meta, batch.iter().map(|item| item.0)).await?;
             for item in batch {
-                let id = ids.get(&item.0).with_context(|| format!("missing id for doc {}", item.0))?;
+                let id = ids
+                    .get(&item.0)
+                    .with_context(|| format!("missing id for doc {}", item.0))?;
                 if !excluded_ids.contains(id) {
                     live.push(*item);
-                    if live.len() == limit { return Ok(live) }
+                    if live.len() == limit {
+                        return Ok(live);
+                    }
                 }
             }
         }
@@ -271,7 +381,10 @@ impl ColdShardReader {
         for block_id in block_ids {
             let me = self.clone();
             let dir = dir.clone();
-            jobs.push(async move { me.block::<Vec<IdRecord>>(&dir, "ids", &block_id.to_string()).await });
+            jobs.push(async move {
+                me.block::<Vec<IdRecord>>(&dir, "ids", &block_id.to_string())
+                    .await
+            });
         }
         let blocks = stream::iter(jobs)
             .buffer_unordered(MAX_CONCURRENT_RANGE_READS)
@@ -281,7 +394,9 @@ impl ColdShardReader {
         for block in blocks {
             for record in block {
                 validate_id_record(meta, &record)?;
-                if wanted.contains(&record.doc_idx) && out.insert(record.doc_idx, record.id).is_some() {
+                if wanted.contains(&record.doc_idx)
+                    && out.insert(record.doc_idx, record.id).is_some()
+                {
                     bail!("duplicate id record doc_idx")
                 }
             }
@@ -289,10 +404,18 @@ impl ColdShardReader {
         Ok(out)
     }
 
-    async fn lexical(&self, dir: &Directory, meta: &ShardMeta, terms: &BTreeSet<String>, stats: &RevisionStats) -> Result<Vec<(u32, f32)>> {
+    async fn lexical(
+        &self,
+        dir: &Directory,
+        meta: &ShardMeta,
+        terms: &BTreeSet<String>,
+        stats: &RevisionStats,
+    ) -> Result<Vec<(u32, f32)>> {
         let mut jobs = Vec::new();
         for term in terms {
-            let Some(key) = meta.term_to_block.get(term) else { continue };
+            let Some(key) = meta.term_to_block.get(term) else {
+                continue;
+            };
             let me = self.clone();
             let dir = dir.clone();
             let key = key.clone();
@@ -309,7 +432,9 @@ impl ColdShardReader {
         let mut scores: BTreeMap<u32, f32> = BTreeMap::new();
         for (term, list) in lists {
             validate_posting_list(meta, &list)?;
-            let Some(df) = stats.term_df.get(&term) else { continue };
+            let Some(df) = stats.term_df.get(&term) else {
+                continue;
+            };
             for p in &list.postings {
                 *scores.entry(p.doc_idx).or_default() += bm25(
                     p.tf,
@@ -327,16 +452,37 @@ impl ColdShardReader {
                 }
             }
         }
-        Ok(scores.into_iter().map(|(doc, s)| {
-            (doc, stats.scoring.cold.lexical.evidence_llr(s, stats.scoring.base_rate))
-        }).collect())
+        Ok(scores
+            .into_iter()
+            .map(|(doc, s)| {
+                (
+                    doc,
+                    stats
+                        .scoring
+                        .cold
+                        .lexical
+                        .evidence_llr(s, stats.scoring.base_rate),
+                )
+            })
+            .collect())
     }
 
-    async fn vector(&self, dir: &Directory, meta: &ShardMeta, q: &[f32], nprobe: usize, candidates: usize) -> Result<Vec<(u32, f32)>> {
+    async fn vector(
+        &self,
+        dir: &Directory,
+        meta: &ShardMeta,
+        q: &[f32],
+        nprobe: usize,
+        candidates: usize,
+    ) -> Result<Vec<(u32, f32)>> {
         let q = normalize(q)?;
         let router: Router = self.block(dir, "router", "main").await?;
         validate_router(meta, &router)?;
-        let probes = top_centroids(&q, &router.centroids, nprobe.max(1).min(router.centroids.len()).min(256));
+        let probes = top_centroids(
+            &q,
+            &router.centroids,
+            nprobe.max(1).min(router.centroids.len()).min(256),
+        );
         let mut jobs = Vec::new();
         for p in probes {
             let me = self.clone();
@@ -358,10 +504,16 @@ impl ColdShardReader {
                     bail!("corrupt quantized vector")
                 }
                 let score = approx_dot(&q, &v);
-                if !score.is_finite() { bail!("non-finite approximate vector score") }
+                if !score.is_finite() {
+                    bail!("non-finite approximate vector score")
+                }
                 best_by_doc
                     .entry(v.doc_idx)
-                    .and_modify(|current| { if score > *current { *current = score; } })
+                    .and_modify(|current| {
+                        if score > *current {
+                            *current = score;
+                        }
+                    })
                     .or_insert(score);
             }
         }
@@ -379,12 +531,16 @@ impl ColdShardReader {
         docs: Vec<u32>,
         stats: &RevisionStats,
     ) -> Result<Vec<(u32, f32)>> {
-        if docs.is_empty() { return Ok(Vec::new()) }
-        let q = normalize(q)?;
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let q = Arc::new(normalize(q)?);
         let block_size = meta.exact_block_size;
         let mut by_block: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
         for d in docs {
-            if d >= meta.document_count { bail!("candidate doc_idx out of bounds") }
+            if d >= meta.document_count {
+                bail!("candidate doc_idx out of bounds")
+            }
             by_block.entry(d / block_size).or_default().push(d);
         }
         let mut jobs = Vec::new();
@@ -392,19 +548,30 @@ impl ColdShardReader {
             let me = self.clone();
             let dir = dir.clone();
             let dim = meta.dimension as usize;
+            let q = q.clone();
             jobs.push(async move {
                 let br = dir.get("exact", &block_id.to_string())?.clone();
-                if br.len > MAX_COMPRESSED_BLOCK_BYTES { bail!("compressed exact block too large: {}", br.len) }
+                if br.len > MAX_COMPRESSED_BLOCK_BYTES {
+                    bail!("compressed exact block too large: {}", br.len)
+                }
                 let bytes = me.range(br.offset, br.len).await?;
                 let raw = decode_block_raw_async(br, bytes).await?;
                 let stride = dim.checked_mul(2).context("exact vector stride overflow")?;
-                if stride == 0 || raw.len() % stride != 0 { bail!("corrupt exact vector block") }
+                if stride == 0 || raw.len() % stride != 0 {
+                    bail!("corrupt exact vector block")
+                }
                 let mut out = Vec::new();
                 for doc in wanted {
                     let local = (doc % block_size) as usize;
-                    let start = local.checked_mul(stride).context("exact vector offset overflow")?;
-                    let end = start.checked_add(stride).context("exact vector end overflow")?;
-                    if end > raw.len() { bail!("exact vector doc offset out of bounds") }
+                    let start = local
+                        .checked_mul(stride)
+                        .context("exact vector offset overflow")?;
+                    let end = start
+                        .checked_add(stride)
+                        .context("exact vector end overflow")?;
+                    if end > raw.len() {
+                        bail!("exact vector doc offset out of bounds")
+                    }
                     let mut score = 0.0f32;
                     for j in 0..dim {
                         let bits = u16::from_le_bytes([raw[start + j * 2], raw[start + j * 2 + 1]]);
@@ -422,21 +589,44 @@ impl ColdShardReader {
             .try_collect::<Vec<_>>()
             .await?;
         let mut scored = Vec::new();
-        for block in blocks { scored.extend(block) }
+        for block in blocks {
+            scored.extend(block)
+        }
         scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        Ok(scored.into_iter().map(|(doc, s)| {
-            (doc, stats.scoring.cold.vector.evidence_llr(s, stats.scoring.base_rate))
-        }).collect())
+        Ok(scored
+            .into_iter()
+            .map(|(doc, s)| {
+                (
+                    doc,
+                    stats
+                        .scoring
+                        .cold
+                        .vector
+                        .evidence_llr(s, stats.scoring.base_rate),
+                )
+            })
+            .collect())
     }
 
-    async fn payloads<I: IntoIterator<Item = u32>>(&self, dir: &Directory, meta: &ShardMeta, docs: I) -> Result<BTreeMap<u32, PayloadRecord>> {
+    async fn payloads<I: IntoIterator<Item = u32>>(
+        &self,
+        dir: &Directory,
+        meta: &ShardMeta,
+        docs: I,
+    ) -> Result<BTreeMap<u32, PayloadRecord>> {
         let wanted: BTreeSet<u32> = docs.into_iter().collect();
-        let block_ids: BTreeSet<u32> = wanted.iter().map(|d| *d / meta.payload_block_size).collect();
+        let block_ids: BTreeSet<u32> = wanted
+            .iter()
+            .map(|d| *d / meta.payload_block_size)
+            .collect();
         let mut jobs = Vec::new();
         for b in block_ids {
             let me = self.clone();
             let dir = dir.clone();
-            jobs.push(async move { me.block::<Vec<PayloadRecord>>(&dir, "payload", &b.to_string()).await });
+            jobs.push(async move {
+                me.block::<Vec<PayloadRecord>>(&dir, "payload", &b.to_string())
+                    .await
+            });
         }
         let blocks = stream::iter(jobs)
             .buffer_unordered(MAX_CONCURRENT_RANGE_READS)
@@ -456,7 +646,9 @@ impl ColdShardReader {
 }
 
 fn validate_id_record(meta: &ShardMeta, record: &IdRecord) -> Result<()> {
-    if record.doc_idx >= meta.document_count { bail!("id record doc_idx out of bounds") }
+    if record.doc_idx >= meta.document_count {
+        bail!("id record doc_idx out of bounds")
+    }
     if record.id.is_empty() || record.id.len() > crate::index::builder::MAX_CHUNK_ID_BYTES {
         bail!("invalid id record chunk id")
     }
@@ -475,8 +667,18 @@ fn validate_posting_list(meta: &ShardMeta, list: &PostingList) -> Result<()> {
     }) {
         bail!("corrupt posting entry")
     }
-    let computed_max_tf = list.postings.iter().map(|posting| posting.tf).max().unwrap_or(0);
-    let computed_min_doc_len = list.postings.iter().map(|posting| posting.doc_len).min().unwrap_or(0);
+    let computed_max_tf = list
+        .postings
+        .iter()
+        .map(|posting| posting.tf)
+        .max()
+        .unwrap_or(0);
+    let computed_min_doc_len = list
+        .postings
+        .iter()
+        .map(|posting| posting.doc_len)
+        .min()
+        .unwrap_or(0);
     if computed_max_tf != list.max_tf || computed_min_doc_len != list.min_doc_len {
         bail!("posting-list bounds do not match payload")
     }
@@ -514,18 +716,30 @@ fn validate_payload(meta: &ShardMeta, payload: &PayloadRecord) -> Result<()> {
 
 fn checked_query_terms(query: &str) -> Result<BTreeSet<String>> {
     let terms = query_terms(query);
-    if terms.len() > MAX_QUERY_TERMS { bail!("query expands to too many lexical terms ({} > {MAX_QUERY_TERMS})", terms.len()) }
+    if terms.len() > MAX_QUERY_TERMS {
+        bail!(
+            "query expands to too many lexical terms ({} > {MAX_QUERY_TERMS})",
+            terms.len()
+        )
+    }
     Ok(terms)
 }
 
-fn metadata_matches(metadata: &BTreeMap<String, serde_json::Value>, filters: &BTreeMap<String, serde_json::Value>) -> bool {
+fn metadata_matches(
+    metadata: &BTreeMap<String, serde_json::Value>,
+    filters: &BTreeMap<String, serde_json::Value>,
+) -> bool {
     filters.iter().all(|(k, v)| metadata.get(k) == Some(v))
 }
 
 fn weighted_interval_max(a: f32, b: f32, weight: f32) -> f32 {
     let lo = a.min(b);
     let hi = a.max(b);
-    if weight >= 0.0 { hi * weight } else { lo * weight }
+    if weight >= 0.0 {
+        hi * weight
+    } else {
+        lo * weight
+    }
 }
 
 fn modality_upper_bound(a: f32, b: f32, weight: f32) -> f32 {

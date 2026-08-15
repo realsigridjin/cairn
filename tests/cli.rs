@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::{fs, process::{Command, Output}};
+use std::{
+    fs,
+    process::{Command, Output},
+};
 
 fn cairn(args: &[&str], cwd: &std::path::Path) -> Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_cairn"))
@@ -51,40 +54,81 @@ fn init_doctor_snapshot_head_and_search_work_end_to_end() -> Result<()> {
         ),
     )?;
 
-    assert_success(cairn(&[
-        "init", "--tenant", "acme", "--kb", "handbook",
-    ], temp.path())?)?;
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
     assert!(config.exists());
 
     assert_success(cairn(&["doctor"], temp.path())?)?;
 
-    assert_success(cairn(&[
-        "snapshot", "chunks.jsonl",
-        "--embedding-model", "test-embedding",
-        "--dev-calibration",
-        "--shards", "1",
-    ], temp.path())?)?;
+    assert_success(cairn(
+        &[
+            "snapshot",
+            "chunks.jsonl",
+            "--embedding-model",
+            "test-embedding",
+            "--dev-calibration",
+            "--shards",
+            "1",
+        ],
+        temp.path(),
+    )?)?;
 
     let head = assert_success(cairn(&["head"], temp.path())?)?;
     assert_eq!(String::from_utf8(head.stdout)?.trim(), "1");
 
-    let search = assert_success(cairn(&[
-        "--format", "json", "search", "object storage", "--limit", "1", "--lexical-only",
-    ], temp.path())?)?;
+    let search = assert_success(cairn(
+        &[
+            "--format",
+            "json",
+            "search",
+            "object storage",
+            "--limit",
+            "1",
+            "--lexical-only",
+        ],
+        temp.path(),
+    )?)?;
     let response: Value = serde_json::from_slice(&search.stdout)?;
     assert_eq!(response.get("revision").and_then(Value::as_u64), Some(1));
-    assert_eq!(response.get("embedding_provider").and_then(Value::as_str), Some("external"));
-    assert_eq!(response.get("embedding_model").and_then(Value::as_str), Some("test-embedding"));
+    assert_eq!(
+        response.get("embedding_provider").and_then(Value::as_str),
+        Some("external")
+    );
+    assert_eq!(
+        response.get("embedding_model").and_then(Value::as_str),
+        Some("test-embedding")
+    );
     assert_eq!(response.get("dimension").and_then(Value::as_u64), Some(2));
-    assert!(response.get("corpus_sha256").and_then(Value::as_str).is_some_and(|value| value.len() == 64));
-    assert_eq!(response.get("hits").and_then(Value::as_array).map(Vec::len), Some(1));
+    assert!(response
+        .get("corpus_sha256")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.len() == 64));
+    assert_eq!(
+        response.get("hits").and_then(Value::as_array).map(Vec::len),
+        Some(1)
+    );
 
     fs::write(temp.path().join("query.txt"), "functional rust")?;
-    let from_file = assert_success(cairn(&[
-        "--format", "json", "search", "--query-file", "query.txt", "--limit", "1", "--lexical-only",
-    ], temp.path())?)?;
+    let from_file = assert_success(cairn(
+        &[
+            "--format",
+            "json",
+            "search",
+            "--query-file",
+            "query.txt",
+            "--limit",
+            "1",
+            "--lexical-only",
+        ],
+        temp.path(),
+    )?)?;
     let response: Value = serde_json::from_slice(&from_file.stdout)?;
-    assert_eq!(response.get("hits").and_then(Value::as_array).map(Vec::len), Some(1));
+    assert_eq!(
+        response.get("hits").and_then(Value::as_array).map(Vec::len),
+        Some(1)
+    );
     Ok(())
 }
 
@@ -95,8 +139,14 @@ fn text_only_snapshot_explains_missing_openrouter_key() -> Result<()> {
         temp.path().join("chunks.jsonl"),
         "{\"id\":\"doc-v1-c0\",\"text\":\"hello object storage\"}\n",
     )?;
-    assert_success(cairn(&["init", "--tenant", "acme", "--kb", "handbook"], temp.path())?)?;
-    let output = cairn(&["snapshot", "chunks.jsonl", "--dev-calibration"], temp.path())?;
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
+    let output = cairn(
+        &["snapshot", "chunks.jsonl", "--dev-calibration"],
+        temp.path(),
+    )?;
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr)?;
     assert!(stderr.contains("OPENROUTER_API_KEY"));
@@ -124,16 +174,24 @@ fn snapshot_after_rollback_uses_a_fresh_revision_number() -> Result<()> {
             "{\"id\":\"b\",\"text\":\"beta\",\"vector\":[0.0,1.0]}\n",
         ),
     )?;
-    assert_success(cairn(&["init", "--tenant", "acme", "--kb", "handbook"], temp.path())?)?;
-    let snapshot = || cairn(&[
-        "snapshot",
-        "chunks.jsonl",
-        "--embedding-model",
-        "test-embedding",
-        "--dev-calibration",
-        "--shards",
-        "1",
-    ], temp.path());
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
+    let snapshot = || {
+        cairn(
+            &[
+                "snapshot",
+                "chunks.jsonl",
+                "--embedding-model",
+                "test-embedding",
+                "--dev-calibration",
+                "--shards",
+                "1",
+            ],
+            temp.path(),
+        )
+    };
 
     assert_success(snapshot()?)?;
     assert_success(snapshot()?)?;
@@ -151,11 +209,24 @@ fn snapshot_after_rollback_uses_a_fresh_revision_number() -> Result<()> {
 #[test]
 fn config_command_is_secret_safe_and_machine_readable() -> Result<()> {
     let temp = tempfile::tempdir()?;
-    assert_success(cairn(&["init", "--tenant", "acme", "--kb", "handbook"], temp.path())?)?;
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
     let output = assert_success(cairn(&["--format", "json", "config"], temp.path())?)?;
     let value: Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(value.pointer("/config/defaults/tenant").and_then(Value::as_str), Some("acme"));
-    assert_eq!(value.pointer("/config/embedding/provider").and_then(Value::as_str), Some("openrouter"));
+    assert_eq!(
+        value
+            .pointer("/config/defaults/tenant")
+            .and_then(Value::as_str),
+        Some("acme")
+    );
+    assert_eq!(
+        value
+            .pointer("/config/embedding/provider")
+            .and_then(Value::as_str),
+        Some("openrouter")
+    );
     assert!(value.get("embedding_api_key_set").is_some());
     assert!(!String::from_utf8(output.stdout)?.contains("sk-or-"));
     Ok(())
