@@ -192,6 +192,7 @@ function registerSessionPacketTool(ctx, resolved, fixedFilters, client) {
                     sourceHits: { type: 'integer', required: true },
                     scopeMismatches: { type: 'integer', required: true },
                     malformedMetadata: { type: 'integer', required: true },
+                    metaChunks: { type: 'integer', required: true },
                     truncated: { type: 'boolean', required: true },
                     remoteBytes: { type: 'integer', required: true },
                     rangeReads: { type: 'integer', required: true },
@@ -223,7 +224,18 @@ function registerSessionPacketTool(ctx, resolved, fixedFilters, client) {
             const matched = [];
             let scopeMismatches = 0;
             let malformedMetadata = 0;
+            let metaChunks = 0;
             for (const hit of response.hits) {
+                // session_meta carries lineage and has no sequence position by design.
+                // Count it separately instead of reporting a valid metadata-tier import
+                // as malformed continuation evidence.
+                if (hit.metadata.doc_type === 'session_meta') {
+                    if (hit.metadata.session_uid === sessionUid)
+                        metaChunks += 1;
+                    else
+                        scopeMismatches += 1;
+                    continue;
+                }
                 const meta = decodeSessionSegmentMetadata(hit.metadata);
                 if (meta === undefined) {
                     malformedMetadata += 1;
@@ -282,6 +294,7 @@ function registerSessionPacketTool(ctx, resolved, fixedFilters, client) {
                 sourceHits: response.hits.length,
                 scopeMismatches,
                 malformedMetadata,
+                metaChunks,
                 truncated: truncated || segments.length < matched.length,
                 remoteBytes: response.remoteBytes,
                 rangeReads: response.rangeReads,
@@ -392,8 +405,13 @@ function citation(tenant, kb, revision, id) {
 function truncate(text, max) {
     if (text.length <= max)
         return text;
-    const cut = text.charCodeAt(max - 1);
-    return `${text.slice(0, cut >= 0xD800 && cut <= 0xDBFF ? max - 1 : max)}…`;
+    // The ellipsis counts toward the caller's budget.
+    const room = max - 1;
+    if (room <= 0)
+        return '…';
+    const cut = text.charCodeAt(room - 1);
+    const end = cut >= 0xD800 && cut <= 0xDBFF ? room - 1 : room;
+    return `${text.slice(0, end)}…`;
 }
 function escapeEvidence(text) {
     return text.replaceAll('END_UNTRUSTED_CAIRN_EVIDENCE', 'END_UNTRUSTED_CAIRN_EVIDENCE_ESCAPED');
@@ -414,7 +432,11 @@ function renderSessionPacket(value) {
         escapeEvidence(segment.text),
         'END_UNTRUSTED_CAIRN_EVIDENCE',
     ].join('\n')).join('\n\n');
-    const empty = value.segments.length === 0 ? '(no segments matched this session_uid in the pinned revision)' : '';
+    const empty = value.segments.length === 0
+        ? value.metaChunks > 0
+            ? '(metadata-tier session header matched; no transcript windows are present in this revision)'
+            : '(no segments matched this session_uid in the pinned revision)'
+        : '';
     return `${header}\n\n${body}${empty}${value.truncated ? '\n\n[CAIRN session packet truncated by trusted plugin limits]' : ''}`;
 }
 function render(value) {

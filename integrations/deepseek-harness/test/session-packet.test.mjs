@@ -35,6 +35,7 @@ function sessionHits() {
     { id: 's1', score: 2, posterior: 0.8, lexical_evidence: 0.5, vector_evidence: 0.5, text: 'first segment text', metadata: { session_uid: 'sess-1', seq_start: 10, role: 'user' } },
     { id: 'other', score: 1.5, posterior: 0.7, lexical_evidence: 0.5, vector_evidence: 0.5, text: 'other session segment', metadata: { session_uid: 'sess-2', seq_start: 5 } },
     { id: 'bad', score: 1, posterior: 0.6, lexical_evidence: 0.5, vector_evidence: 0.5, text: 'malformed segment', metadata: { session_uid: 'sess-1', seq_start: 'ten' } },
+    { id: 'meta', score: 0.5, posterior: 0.5, lexical_evidence: 0.5, vector_evidence: 0.5, text: 'session header', metadata: { doc_type: 'session_meta', session_uid: 'sess-1', cwd: '/repo' } },
   ]
 }
 
@@ -102,9 +103,10 @@ test('session packet filters by session_uid, reorders by seq_start, and renders 
     'cairn://acme/sessions/revision/9/chunk/s2',
   ])
   assert.equal(value.returnedSegments, 2)
-  assert.equal(value.sourceHits, 4)
+  assert.equal(value.sourceHits, 5)
   assert.equal(value.scopeMismatches, 1)
   assert.equal(value.malformedMetadata, 1)
+  assert.equal(value.metaChunks, 1)
   assert.equal(value.truncated, false)
   const rendered = sessionTool.output.render({}, value)[0].text
   assert.match(rendered, /CAIRN-SESSION sessions@revision-9 session_uid=sess-1/u)
@@ -130,7 +132,7 @@ test('bounds: model limit and total text budget truncate deterministically', asy
   const bounded = await budgetTool.execute({ session_uid: 'sess-1' }, exec())
   assert.equal(bounded.segments.length, 2)
   assert.equal(bounded.segments[0].text, 'first segment text')
-  assert.equal(bounded.segments[1].text, 'se…')
+  assert.equal(bounded.segments[1].text, 's…')
   assert.equal(bounded.truncated, true)
   const [, narrowTool] = await mount(mock.url, { sessionMaxSegments: 2 })
   const narrow = await narrowTool.execute({ session_uid: 'sess-1' }, exec())
