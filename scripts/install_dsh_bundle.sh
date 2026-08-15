@@ -4,7 +4,7 @@ profile=${1:-web}
 [ "$#" -eq 0 ] || shift
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 plugin="$root/integrations/deepseek-harness"
-tarball="$root/dist/cairn-uqa-dsh-2.1.0.tgz"
+tarball="$root/dist/cairn-uqa-dsh-1.0.0.tgz"
 fail() { printf 'install_dsh_bundle: %s\n' "$1" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || fail 'Node.js is required'
 command -v dsh >/dev/null 2>&1 || fail 'dsh is not on PATH'

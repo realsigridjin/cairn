@@ -1,6 +1,6 @@
 {
   "name": "cairn-uqa-dsh",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "description": "Native DeepSeek Harness retrieval tool for CAIRN with optional UQA-RS warm execution",
   "license": "Apache-2.0",
   "type": "module",

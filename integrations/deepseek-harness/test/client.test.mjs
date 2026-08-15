@@ -17,8 +17,10 @@ function client(baseUrl) { return new CairnClient({ baseUrl, tenant: 'acme', kno
 test('URL and version policy rejects unsafe destinations', () => {
   assert.throws(() => normalizeBaseUrl('http://localhost.evil.example'), /HTTPS/)
   assert.throws(() => normalizeBaseUrl('https://user:pass@example.com'), /credentials/)
-  assert.doesNotThrow(() => assertCompatibleVersion('2.1.0', 1))
-  assert.throws(() => assertCompatibleVersion('3.0.0', 1), /unsupported/)
+  assert.doesNotThrow(() => assertCompatibleVersion('1.0.0', 1))
+  assert.doesNotThrow(() => assertCompatibleVersion('1.9.0', 1))
+  assert.throws(() => assertCompatibleVersion('0.9.0', 1), /unsupported/)
+  assert.throws(() => assertCompatibleVersion('2.1.0', 1), /unsupported/)
 })
 
 test('search retries retryable response and propagates auth/call id', async t => {

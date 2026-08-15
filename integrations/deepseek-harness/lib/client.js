@@ -39,8 +39,8 @@ export function normalizeBaseUrl(raw) {
 }
 export function assertCompatibleVersion(version, apiVersion) {
     const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(version);
-    if (match === null || Number(match[1]) !== 2 || Number(match[2]) < 1) {
-        throw new Error(`unsupported CAIRN version ${version}; expected >=2.1.0 <3.0.0`);
+    if (match === null || Number(match[1]) !== 1) {
+        throw new Error(`unsupported CAIRN version ${version}; expected >=1.0.0 <2.0.0`);
     }
     if (apiVersion !== 1)
         throw new Error(`unsupported CAIRN HTTP API version ${apiVersion}`);
