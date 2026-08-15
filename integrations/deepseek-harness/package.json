@@ -1,0 +1,42 @@
+{
+  "name": "cairn-uqa-dsh",
+  "version": "2.1.0",
+  "description": "Native DeepSeek Harness retrieval tool for CAIRN with optional UQA-RS warm execution",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./lib/client.d.ts", "default": "./lib/client.js" },
+    "./protocol": { "types": "./lib/protocol.d.ts", "default": "./lib/protocol.js" },
+    "./package.json": "./package.json"
+  },
+  "bin": { "cairn-dsh-doctor": "./bin/cairn-dsh-doctor.mjs" },
+  "files": ["bin/cairn-dsh-doctor.mjs", "lib/*.js", "lib/*.d.ts", "cordis.patch.yml", "README.md", "LICENSE"],
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/node": "^22.19.0",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "clean": "node ./bin/clean.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:offline": "tsc -p tsconfig.local.json",
+    "test": "node --test --test-concurrency=1 ./test/*.test.mjs",
+    "check": "npm run typecheck && npm run build && npm test",
+    "check:offline": "npm run clean && npm run typecheck:offline && npm test && npm run pack:dry-run",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "keywords": ["deepseek-harness", "dsh-plugin", "rag", "retrieval", "cairn", "uqa-rs"]
+}

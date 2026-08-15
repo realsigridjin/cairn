@@ -1,0 +1,28 @@
+import type { Context } from '@deepseek-ai/cordis';
+export declare const name = "cairn-uqa-dsh";
+export declare const inject: string[];
+export interface Config {
+    baseUrl: string;
+    tenant: string;
+    knowledgeBase: string;
+    toolName?: string;
+    toolDescription?: string;
+    tokenEnv?: string;
+    defaultLimit?: number;
+    maxLimit?: number;
+    candidateMultiplier?: number;
+    maxCandidateLimit?: number;
+    timeoutMs?: number;
+    retries?: number;
+    maxRetryDelayMs?: number;
+    maxResponseBytes?: number;
+    maxTextCharsPerHit?: number;
+    maxTotalTextChars?: number;
+    maxMetadataBytesPerHit?: number;
+    metadataKeys?: string[];
+    fixedFiltersJson?: string;
+    allowModelFilters?: boolean;
+    healthCheckOnLoad?: boolean;
+}
+export declare const Config: import("@deepseek-ai/schemastery").Schema<Config>;
+export declare function apply(ctx: Context, config: Config): Promise<void>;

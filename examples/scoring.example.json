@@ -1,0 +1,15 @@
+{
+  "base_rate": 0.01,
+  "bm25_k1": 1.2,
+  "bm25_b": 0.75,
+  "cold": {
+    "lexical": { "slope": 0.5, "intercept": -2.0 },
+    "vector": { "slope": 8.0, "intercept": -4.0 }
+  },
+  "warm": {
+    "lexical": { "slope": 0.5, "intercept": -2.0 },
+    "vector": { "slope": 8.0, "intercept": -4.0 }
+  },
+  "lexical_weight": 1.0,
+  "vector_weight": 1.0
+}

@@ -1,0 +1,10 @@
+name = "cairn-r2-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cairn"
+
+[vars]
+# Set with: wrangler secret put CAIRN_GATEWAY_TOKEN

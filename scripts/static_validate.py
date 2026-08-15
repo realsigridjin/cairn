@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import hashlib, json, re, stat, sys, tomllib
+root=Path(__file__).resolve().parents[1]; errors=[]
+def need(rel):
+ p=root/rel
+ if not p.is_file() or p.stat().st_size==0: errors.append(f'missing/empty: {rel}')
+ return p
+required=['Cargo.toml','README.md','DEEPSEEK_HARNESS.md','REVIEW.md','VALIDATION.md','src/server.rs','src/model.rs','src/runtime.rs','src/bin/cairn/cli.rs','integrations/deepseek-harness/package.json','integrations/deepseek-harness/cordis.patch.yml','integrations/deepseek-harness/src/index.ts','integrations/deepseek-harness/src/client.ts','integrations/deepseek-harness/src/protocol.ts','integrations/deepseek-harness/lib/index.js','integrations/deepseek-harness/test/plugin.test.mjs','integrations/deepseek-harness/bin/cairn-dsh-doctor.mjs','scripts/install_dsh_bundle.sh','dist/cairn-uqa-dsh-2.1.0.tgz','dist/cairn-uqa-dsh-2.1.0.tgz.sha256']
+for rel in required: need(rel)
+try:
+ with (root/'Cargo.toml').open('rb') as f: cargo=tomllib.load(f)
+ if cargo['package']['version']!='2.1.0': errors.append('Cargo version must be 2.1.0')
+ if cargo.get('features',{}).get('default')!=[]: errors.append('UQA must remain opt-in')
+except Exception as e: errors.append(f'Cargo parse: {e}')
+try:
+ pkg=json.loads((root/'integrations/deepseek-harness/package.json').read_text())
+ if pkg.get('version')!='2.1.0' or pkg.get('dsh',{}).get('bundle',{}).get('patch')!='./cordis.patch.yml': errors.append('invalid DSH package metadata')
+ if pkg.get('engines',{}).get('node')!='^22.19.0 || >=24.0.0': errors.append('wrong DSH Node floor')
+except Exception as e: errors.append(f'plugin package parse: {e}')
+for rel in ['examples/scoring.example.json']:
+ try: json.loads((root/rel).read_text())
+ except Exception as e: errors.append(f'{rel}: {e}')
+for rel in ['examples/chunks.jsonl','examples/chunks-text-only.jsonl']:
+ try:
+  for line in (root/rel).read_text().splitlines():
+   if line.strip(): json.loads(line)
+ except Exception as e: errors.append(f'{rel}: {e}')
+patch=(root/'integrations/deepseek-harness/cordis.patch.yml').read_text()
+for bad in ['!!js','process.env.CAIRN_DSH_BASE_URL','process.env.CAIRN_DSH_TOKEN_ENV']:
+ if bad in patch: errors.append(f'unsafe bundle expression: {bad}')
+for marker in ['ctx.tools.register(defineTool','exec.signal','exec.callId','BEGIN_UNTRUSTED_CAIRN_EVIDENCE','fixedFiltersJson','CAIRN_HTTP_API_VERSION','WWW_AUTHENTICATE','allowed_scope','/v1/{tenant}/kb/{kb}/head','embedding_provider']:
+ if marker not in '\n'.join(p.read_text(errors='ignore') for p in root.rglob('*') if p.is_file() and 'node_modules' not in p.parts): errors.append(f'missing marker: {marker}')
+for p in [*root.joinpath('src').rglob('*.rs'),*root.joinpath('tests').rglob('*.rs')]:
+ t=p.read_text()
+ for pattern,label in [(r'\.unwrap\(\)','unwrap'),(r'\.expect\(','expect'),(r'\bpanic!\s*\(','panic'),(r'\btodo!\s*\(','todo'),(r'\bunimplemented!\s*\(','unimplemented'),(r'\bunsafe\s*\{','unsafe')]:
+  if re.search(pattern,t): errors.append(f'{label}: {p.relative_to(root)}')
+ if t.count('{')!=t.count('}'): errors.append(f'brace imbalance: {p.relative_to(root)}')
+for rel in ['scripts/install_dsh_bundle.sh','integrations/deepseek-harness/bin/cairn-dsh-doctor.mjs']:
+ p=root/rel
+ if p.exists() and not (p.stat().st_mode&stat.S_IXUSR): errors.append(f'not executable: {rel}')
+try:
+ line=(root/'dist/cairn-uqa-dsh-2.1.0.tgz.sha256').read_text().split()[0]
+ if hashlib.sha256((root/'dist/cairn-uqa-dsh-2.1.0.tgz').read_bytes()).hexdigest()!=line: errors.append('plugin tgz digest mismatch')
+except Exception as e: errors.append(f'plugin digest: {e}')
+if errors:
+ print('STATIC VALIDATION FAILED'); print('\n'.join('- '+x for x in errors)); sys.exit(1)
+print('STATIC VALIDATION PASSED'); print(f'files={sum(1 for p in root.rglob("*") if p.is_file())}')

@@ -1,0 +1,12 @@
+CAIRN and the cairn-uqa-dsh integration code in this archive are original
+Apache-2.0 integration code unless a file states otherwise.
+
+UQA-RS is NOT bundled. The optional `uqa` Cargo feature links a separately
+checked-out UQA-RS tree and remains disabled by default. Comply with the exact
+UQA-RS revision and licensing path used by your distribution/deployment.
+
+DeepSeek Harness is NOT bundled. `cairn-uqa-dsh` declares peer compatibility
+with separately installed Harness packages and does not copy or relicense
+Harness source.
+
+This notice is informational and is not legal advice.

@@ -1,0 +1,20 @@
+[store]
+local = "store"
+# object_gateway = "https://your-private-r2-gateway.example.com"
+# bearer_env = "CAIRN_BEARER_TOKEN"
+
+[embedding]
+provider = "openrouter"
+model = "qwen/qwen3-embedding-8b"
+dimensions = 1024
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+batch_size = 32
+max_batch_bytes = 2097152
+concurrency = 4
+timeout_secs = 60
+
+[defaults]
+tenant = "acme"
+knowledge_base = "handbook"
+cache = "cache"

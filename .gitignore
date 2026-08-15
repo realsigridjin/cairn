@@ -1,0 +1,7 @@
+/target
+/cairn-cache
+/cairn-store
+/cloudflare/r2-gateway/node_modules
+/cloudflare/r2-gateway/.wrangler
+*.uqa
+*.cairn

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "typeRoots": ["./dev-shims"]
+  },
+  "include": ["src/**/*.ts", "dev-shims/**/*.d.ts"]
+}

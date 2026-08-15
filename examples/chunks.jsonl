@@ -1,0 +1,3 @@
+{"id":"doc-1","text":"Rust is a systems programming language.","vector":[1.0,0.0,0.0,0.0],"metadata":{"lang":"en"}}
+{"id":"doc-2","text":"검색 엔진은 문서에서 관련 정보를 찾습니다.","vector":[0.0,1.0,0.0,0.0],"metadata":{"lang":"ko"}}
+{"id":"doc-3","text":"Object storage is useful for immutable cold data.","vector":[0.8,0.0,0.2,0.0],"metadata":{"lang":"en"}}
