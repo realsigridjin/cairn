@@ -493,7 +493,7 @@ export function sessionsPage(options: {
           ? emptyState({
               title: 'No sessions knowledge base is configured.',
               body: 'Import local agent sessions, ingest them as a CAIRN knowledge base, then point this console at that scope with CAIRN_WEB_SESSIONS_SCOPE=tenant/kb.',
-              command: 'python3 scripts/session_import.py export --out .cairn/session-chunks.jsonl',
+              command: 'python3 scripts/session_import.py --out .cairn/session-chunks.jsonl',
             })
           : html`${notice(
               'info',

@@ -142,7 +142,7 @@ const CATALOGUE: Readonly<Record<string, ErrorPresentation>> = {
     headline: 'No sessions knowledge base is configured.',
     remedy:
       'Continuation packets read imported agent sessions from a dedicated knowledge base. Import and ingest local sessions, then set CAIRN_WEB_SESSIONS_SCOPE=tenant/kb to a scope that also appears in CAIRN_WEB_SCOPES.',
-    command: 'python3 scripts/session_import.py export --out .cairn/session-chunks.jsonl',
+    command: 'python3 scripts/session_import.py --out .cairn/session-chunks.jsonl',
     retryable: false,
   },
   NO_SCOPES: {

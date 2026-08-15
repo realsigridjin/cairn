@@ -77,6 +77,17 @@ def decompress_zstd(data: bytes, *, backend: str = "auto", zstd_bin: str | None 
     return proc.stdout
 
 
+def _epoch_ms(value) -> int | None:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return iso_to_ms(value)
+    return None
+
+
 def _usage_from_projcache(raw) -> Usage | None:
     if not isinstance(raw, dict):
         return None
@@ -106,8 +117,8 @@ def _projcache_complete(cache: dict) -> bool:
 
 def _session_from_projcache(native_id, zstd_path, cache, workspace, stat):
     identity = cache.get("identity") or {}
-    created_ms = cache.get("createdAt") or 0
-    updated_ms = cache.get("updatedAt") or created_ms
+    created_ms = _epoch_ms(cache.get("createdAt")) or 0
+    updated_ms = _epoch_ms(cache.get("updatedAt")) or created_ms
     session = NormalizedSession(
         session_uid=make_session_uid(SOURCE, native_id),
         source=SOURCE,
@@ -186,7 +197,7 @@ def parse_session(path, *, tier, start_offset, prev_state, stat,
         )
 
     native_id = header.get("id") or native_id
-    created_ms = header.get("createdAt") or iso_to_ms(header.get("createdAt")) or 0
+    created_ms = _epoch_ms(header.get("createdAt")) or 0
     updated_ms = int(created_ms)
     first_prompt = None
     usage = _usage_from_projcache((cache or {}).get("tokenUsage"))

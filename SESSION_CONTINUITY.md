@@ -69,14 +69,14 @@ python3 scripts/session_import.py --discover
 Build the canonical metadata-tier corpus:
 
 ```bash
-python3 scripts/session_import.py export \
+python3 scripts/session_import.py \
   --out .cairn/session-chunks.jsonl
 ```
 
 Opt into redacted transcript windows:
 
 ```bash
-python3 scripts/session_import.py export \
+python3 scripts/session_import.py \
   --tier transcript \
   --out .cairn/session-chunks.jsonl
 ```

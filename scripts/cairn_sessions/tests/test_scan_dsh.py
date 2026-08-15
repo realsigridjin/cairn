@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import unittest
@@ -108,6 +109,25 @@ class DshMetadataTierTest(unittest.TestCase):
         self.assertEqual(session.cwd, "/Users/test/dshproj")
         self.assertEqual(session.repo_path, "/Users/test/dshproj")
         self.assertEqual(session.messages, [])
+
+    def test_projcache_accepts_iso_timestamps(self):
+        root = helpers.build_dsh_store(self._tmp.name)
+        cache_path = os.path.join(
+            root, "--Users-test-dshproj--", helpers.DSH_SESSION_ID,
+            "session_projcache.json",
+        )
+        with open(cache_path, encoding="utf-8") as fh:
+            cache = json.load(fh)
+        cache["createdAt"] = "2026-08-13T16:09:27.547Z"
+        cache["updatedAt"] = "2026-08-13T16:16:43.952Z"
+        with open(cache_path, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+
+        parsed, report, _ = _scan(root, "metadata", self._tmp.name)
+        self.assertEqual(report.errors, [])
+        session = parsed[0].session
+        self.assertEqual(session.created_at_ms, scan_dsh.iso_to_ms(cache["createdAt"]))
+        self.assertEqual(session.updated_at_ms, scan_dsh.iso_to_ms(cache["updatedAt"]))
 
     @unittest.skipUnless(helpers.zstd_available(), "no zstd backend on this host")
     def test_missing_projcache_falls_back_to_header(self):

@@ -9,7 +9,7 @@ Rust standalone clippy (-D warnings): PASS
 DeepSeek plugin strict offline TypeScript emit: PASS
 DeepSeek plugin Node tests: 13/13 PASS
 DeepSeek plugin npm pack dry-run: PASS
-Session importer unittest suite: 67/67 PASS
+Session importer unittest suite: 69/69 PASS
 Web strict TypeScript typecheck: PASS
 Web Node tests: 183/183 PASS
 CAIRN dependency-free structural validation: PASS

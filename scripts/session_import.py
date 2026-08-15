@@ -32,6 +32,11 @@ EXIT_FATAL = 1
 EXIT_PARTIAL = 2
 
 
+def _home_sessions_root(env_var: str, fallback_home: str) -> str:
+    base = os.environ.get(env_var, fallback_home)
+    return os.path.join(base, "sessions")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="session_import.py",
@@ -63,12 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="senpi sessions root (also scans pi format)")
     parser.add_argument("--pi-root", default="~/.pi/agent/sessions",
                         help="pi sessions root (same format as senpi)")
-    parser.add_argument("--codex-root", default="~/.codex/sessions",
-                        help="codex rollout sessions root")
+    parser.add_argument("--codex-root", default=_home_sessions_root("CODEX_HOME", "~/.codex"),
+                        help="codex rollout sessions root (default: $CODEX_HOME/sessions or ~/.codex/sessions)")
     parser.add_argument("--claude-root", default="~/.claude/projects",
                         help="claude code projects root")
-    parser.add_argument("--dsh-root", default="~/.dsh/sessions",
-                        help="DeepSeek Harness sessions root")
+    parser.add_argument("--dsh-root", default=_home_sessions_root("DSH_HOME", "~/.dsh"),
+                        help="DeepSeek Harness sessions root (default: $DSH_HOME/sessions or ~/.dsh/sessions)")
     parser.add_argument(
         "--tasks-root",
         action="append",

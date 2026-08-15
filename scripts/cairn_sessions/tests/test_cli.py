@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 
 import helpers
@@ -207,6 +208,12 @@ class CliCleanRunTest(CliTestBase):
         self.assertEqual(args.tier, "metadata")
         self.assertFalse(args.delta)
         self.assertFalse(args.discover)
+
+    def test_home_env_defaults(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "/custom/codex", "DSH_HOME": "/custom/dsh"}):
+            args = session_import.build_parser().parse_args([])
+        self.assertEqual(args.codex_root, "/custom/codex/sessions")
+        self.assertEqual(args.dsh_root, "/custom/dsh/sessions")
 
 
 @unittest.skipUnless(helpers.zstd_available(), "no zstd backend on this host")

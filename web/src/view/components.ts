@@ -586,12 +586,12 @@ export function sessionPacketSection(packet: SessionPacket): SafeHtml {
               title: 'This session was imported at the metadata tier.',
               body: 'The session exists and its lineage is shown above, but no transcript windows were indexed, so there is no ordered evidence to continue from. Transcript import is opt-in.',
               command:
-                'python3 scripts/session_import.py export --tier transcript --out .cairn/session-chunks.jsonl',
+                'python3 scripts/session_import.py --tier transcript --out .cairn/session-chunks.jsonl',
             })
           : emptyState({
               title: 'No segments matched this session in the pinned revision.',
               body: 'The session_uid resolved no chunks at all. Check the uid, or re-run the importer and ingest to publish a newer revision.',
-              command: 'python3 scripts/session_import.py export --out .cairn/session-chunks.jsonl',
+              command: 'python3 scripts/session_import.py --out .cairn/session-chunks.jsonl',
             })
         : html`<div class="results">
             ${join(packet.segments.map((segment, index) => segmentCard(segment, index)))}

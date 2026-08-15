@@ -41,7 +41,6 @@ export interface WebConfig {
    * store is purely in memory, which keeps local dev free of stray files.
    */
   readonly historyPath: string | undefined
-  readonly allowHistoricalRevisions: boolean
 }
 
 export const DEFAULTS = {
@@ -117,11 +116,6 @@ function optionalPath(raw: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
 }
 
-function booleanEnv(env: NodeJS.ProcessEnv, key: string): boolean {
-  const raw = env[key]?.trim().toLowerCase()
-  return raw === '1' || raw === 'true' || raw === 'yes'
-}
-
 /**
  * `CAIRN_WEB_SCOPES=acme/handbook,acme/runbooks!fenced`
  * A trailing `!fenced` marks a scope the server will refuse with
@@ -186,6 +180,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
     ),
     historyLimit: integerEnv(env, 'CAIRN_WEB_HISTORY_LIMIT', DEFAULTS.historyLimit),
     historyPath: optionalPath(env.CAIRN_WEB_HISTORY_PATH),
-    allowHistoricalRevisions: booleanEnv(env, 'CAIRN_ALLOW_HISTORICAL_REVISIONS'),
   }
 }
