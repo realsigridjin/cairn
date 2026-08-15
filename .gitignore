@@ -1,7 +1,10 @@
 /target
 /cairn-cache
 /cairn-store
+/.omo
 /cloudflare/r2-gateway/node_modules
 /cloudflare/r2-gateway/.wrangler
+node_modules/
+__pycache__/
 *.uqa
 *.cairn
