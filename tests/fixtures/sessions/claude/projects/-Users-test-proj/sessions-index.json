@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "sessionId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "fullPath": "FIXTURE_ROOT/projects/-Users-test-proj/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl",
+      "fileMtime": 1786248000000,
+      "firstPrompt": "review the session importer design",
+      "summary": "Importer design review",
+      "messageCount": 4,
+      "created": "2026-08-01T04:00:00.000Z",
+      "modified": "2026-08-01T04:00:30.000Z",
+      "gitBranch": "main",
+      "projectPath": "/Users/test/proj",
+      "isSidechain": false
+    }
+  ]
+}

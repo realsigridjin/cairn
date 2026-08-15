@@ -1,0 +1,23 @@
+{
+  "identity": {
+    "cwd": "/Users/test/dshproj",
+    "model": "deepseek-v4",
+    "provider": "deepseek",
+    "agentPreset": "standard"
+  },
+  "title": "Repo orientation",
+  "firstPrompt": "what does this repo do?",
+  "createdAt": 1786630000000,
+  "updatedAt": 1786630003000,
+  "messageCount": 4,
+  "tokenUsage": {
+    "input": 1200,
+    "output": 340,
+    "cache_read": 100,
+    "cache_write": 50,
+    "total": 1690,
+    "cost": 0.0021
+  },
+  "parentSession": null,
+  "delegationDepth": 0
+}

@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"this transcript is not in the index and is truncated"}]},"uuid":"e1","timestamp":"2026-08-01T05:00:00.000Z","cwd":"/Users/test/proj","sessionId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"}
+{"parentUuid":"e1","isSidechain":false,"type":"assistant","uuid":"e2","timestamp":"2026-08-01T05:00:05.000Z","cwd":"/Users/test/proj","sessionId":"eeeeeeee-eeee-4eee-8e

@@ -1,0 +1,2 @@
+{"type":"session","version":99,"id":"session-88888888-8888-4888-8888-888888888888","createdAt":1786640000000,"cwd":"/Users/test/dshproj","delegationDepth":0,"agentPreset":"standard"}
+{"type":"user/message","seq":1,"time":1786640001000,"data":{"content":[{"type":"text","text":"session from a future format version"}],"role":"user","id":"vm1"},"surfaceOp":"append"}

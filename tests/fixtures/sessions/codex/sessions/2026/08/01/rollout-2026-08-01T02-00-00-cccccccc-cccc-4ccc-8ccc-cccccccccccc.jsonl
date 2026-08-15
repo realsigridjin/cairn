@@ -1,0 +1,4 @@
+{"timestamp":"2026-08-01T02:00:00.500Z","type":"session_meta","payload":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","timestamp":"2026-08-01T02:00:00.000Z","cwd":"/Users/test/codexproj","originator":"codex-tui","model_provider":"codexlb"}}
+{"timestamp":"2026-08-01T02:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"this rollout has a corrupt line mid-file"}]}}
+{"timestamp":"2026-08-01T02:00:05.000Z","type":"response_item","payload": BROKEN-JSON }
+{"timestamp":"2026-08-01T02:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"unreachable"}]}}

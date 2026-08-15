@@ -1,0 +1,4 @@
+{"timestamp":"2026-08-01T01:00:00.500Z","type":"session_meta","payload":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","timestamp":"2026-08-01T01:00:00.000Z","cwd":"/Users/test/codexproj","originator":"codex-subagent","cli_version":"0.145.0","model_provider":"codexlb","parent_thread_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","root_thread_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","thread_spawn":{"depth":1,"agent_role":"explorer"}}}
+{"timestamp":"2026-08-01T01:00:01.000Z","type":"turn_context","payload":{"turn_id":"t9","cwd":"/Users/test/codexproj","model":"gpt-5.6-sol"}}
+{"timestamp":"2026-08-01T01:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"subtask: map the store layout"}]}}
+{"timestamp":"2026-08-01T01:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"layout mapped"}]}}

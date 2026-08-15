@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-08-02T00:00:00.000Z","cwd":"/Users/test/other"}
+{"type":"model_change","id":"mc1","parentId":null,"timestamp":"2026-08-02T00:00:01.000Z","provider":"anthropic","modelId":"claude-opus-5"}
+{"type":"message","id":"d1","parentId":"mc1","timestamp":"2026-08-02T00:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"DUPLICATE COPY MARKER: same session id copied from another store dir"}],"timestamp":1786317602000}}
+{"type":"message","id":"d2","parentId":"d1","timestamp":"2026-08-02T00:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"duplicate copy answer"}],"timestamp":1786317603000,"usage":{"input":10,"output":5,"total":15,"cost":{"total":0.0001}}}}

@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"22222222-2222-4222-8222-222222222222","timestamp":"2026-08-01T02:00:00.000Z","cwd":"/Users/test/myproj"}
+{"type":"model_change","id":"mc2","parentId":null,"timestamp":"2026-08-01T02:00:01.000Z","provider":"kimi-coding","modelId":"k3"}
+{"type":"message","id":"c1","parentId":"mc2","timestamp":"2026-08-01T02:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"child task: scan the session stores"}],"timestamp":1786240802000}}
+{"type":"message","id":"c2","parentId":"c1","timestamp":"2026-08-01T02:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"scanning complete"}],"timestamp":1786240804000,"usage":{"input":500,"output":40,"total":540,"cost":{"total":0.001}}}}

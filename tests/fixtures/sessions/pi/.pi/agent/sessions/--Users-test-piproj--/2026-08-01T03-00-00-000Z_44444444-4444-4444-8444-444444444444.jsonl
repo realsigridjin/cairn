@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"44444444-4444-4444-8444-444444444444","timestamp":"2026-08-01T03:00:00.000Z","cwd":"/Users/test/piproj"}
+{"type":"model_change","id":"mc4","parentId":null,"timestamp":"2026-08-01T03:00:01.000Z","provider":"openrouter","modelId":"kimi-k3"}
+{"type":"message","id":"p1","parentId":"mc4","timestamp":"2026-08-01T03:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"plain pi session prompt"}],"timestamp":1786244402000}}
+{"type":"message","id":"p2","parentId":"p1","timestamp":"2026-08-01T03:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"plain pi answer"}],"timestamp":1786244403000,"usage":{"input":100,"output":20,"total":120,"cost":{"total":0.0002}}}}
