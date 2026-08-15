@@ -171,6 +171,27 @@ class CliCleanRunTest(CliTestBase):
                         "store_path", "import_batch", "importer_version"):
                 self.assertIn(key, meta)
 
+    def test_discover_is_read_only_and_ignores_prior_checkpoints(self):
+        code, output = self.run_cli("--tier", "metadata", "--json")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(os.path.exists(self.out))
+        self.assertTrue(os.path.exists(self.ckpt))
+
+        discover_out = os.path.join(self._tmp.name, "discover.jsonl")
+        discover_ckpt = os.path.join(self._tmp.name, "discover-checkpoint.json")
+        code, output = self.run_cli(
+            "--tier", "metadata", "--discover", "--json",
+            "--out", discover_out, "--checkpoint", discover_ckpt,
+        )
+        self.assertEqual(code, 0, output)
+        report = json.loads(output)
+        self.assertTrue(report["discover"])
+        self.assertGreater(report["chunks_discovered"], 0)
+        stores = {s["store"]: s for s in report["stores"]}
+        self.assertGreater(stores["senpi"]["files_imported"], 0)
+        self.assertFalse(os.path.exists(discover_out))
+        self.assertFalse(os.path.exists(discover_ckpt))
+
     def test_json_report(self):
         code, output = self.run_cli("--tier", "metadata", "--json")
         self.assertEqual(code, 0)
@@ -185,6 +206,7 @@ class CliCleanRunTest(CliTestBase):
         args = session_import.build_parser().parse_args([])
         self.assertEqual(args.tier, "metadata")
         self.assertFalse(args.delta)
+        self.assertFalse(args.discover)
 
 
 @unittest.skipUnless(helpers.zstd_available(), "no zstd backend on this host")

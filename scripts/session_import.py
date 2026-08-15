@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="senpi-task root (.omo/senpi-task) for lineage; repeatable. "
         "Defaults to ./.omo/senpi-task when present.",
     )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="scan and report supported stores without writing a corpus or checkpoint",
+    )
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help=f"canonical corpus output path (default: {DEFAULT_OUT})")
     parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT,
@@ -118,8 +123,14 @@ def run_import(args) -> tuple[int, dict]:
 
     out_path = os.path.abspath(os.path.expanduser(args.out))
     ckpt_path = os.path.abspath(os.path.expanduser(args.checkpoint))
-    prev = emit.PrevCorpusIndex.load(None if args.no_carry_vectors else out_path)
-    ckpt = checkpoint_mod.Checkpoint.load(ckpt_path)
+    if args.discover:
+        # Discovery must report what exists now, not what a previous import
+        # checkpoint considered unchanged, and it must not write either file.
+        prev = emit.PrevCorpusIndex()
+        ckpt = checkpoint_mod.Checkpoint(ckpt_path)
+    else:
+        prev = emit.PrevCorpusIndex.load(None if args.no_carry_vectors else out_path)
+        ckpt = checkpoint_mod.Checkpoint.load(ckpt_path)
 
     selected = {s.strip() for s in args.stores.split(",") if s.strip()}
     tasks_roots = _default_tasks_roots(args)
@@ -163,6 +174,20 @@ def run_import(args) -> tuple[int, dict]:
 
     warnings: list[str] = []
     lines = emit.build_corpus(parsed_files, prev, warnings)
+    if args.discover:
+        has_errors = any(r.errors or r.status == "error" for r in store_reports)
+        exit_code = EXIT_PARTIAL if has_errors else EXIT_OK
+        report = {
+            "discover": True,
+            "tier": args.tier,
+            "chunks_discovered": len(lines),
+            "importer_version": IMPORTER_VERSION,
+            "stores": [r.to_dict() for r in store_reports],
+            "warnings": warnings,
+            "exit_code": exit_code,
+        }
+        return exit_code, report
+
     try:
         chunk_count = emit.write_corpus(lines, out_path)
     except OSError as exc:
@@ -190,6 +215,8 @@ def run_import(args) -> tuple[int, dict]:
 def _print_human(report: dict) -> None:
     print("== cairn session import ==")
     print(f"tier: {report['tier']}")
+    if report.get("discover"):
+        print("mode: discover (read-only)")
     for store in report["stores"]:
         line = (
             f"  {store['store']:<8} status={store['status']:<7} "
@@ -198,7 +225,10 @@ def _print_human(report: dict) -> None:
             f"errors={len(store['errors'])}"
         )
         print(line)
-    print(f"chunks: {report['chunks_written']} -> {report['out']}")
+    if report.get("discover"):
+        print(f"chunks discovered: {report['chunks_discovered']}")
+    else:
+        print(f"chunks: {report['chunks_written']} -> {report['out']}")
     for warning in report["warnings"]:
         print(f"warning: {warning}")
     for store in report["stores"]:
