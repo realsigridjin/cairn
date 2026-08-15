@@ -232,7 +232,7 @@ def scan(root, *, tier, checkpoint, prev_index, report, tasks_roots=()):
     task_map = load_tasks(tasks_roots)
     parsed = []
     for path in sorted(scanutil.walk_files(root)):
-        if not path.endswith(".jsonl"):
+        if not path.endswith(".jsonl") or path.endswith(".history.jsonl"):
             continue
         lineage = _lineage_for(path, task_map)
         pf = scanutil.drive_file(

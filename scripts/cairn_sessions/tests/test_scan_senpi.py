@@ -81,6 +81,13 @@ class SenpiParseTest(unittest.TestCase):
             self.assertGreaterEqual(session.message_count, 1)
             self.assertTrue(session.first_prompt)
 
+    def test_goal_history_sidecars_are_ignored(self):
+        _parsed, report = _scan(SENPI_FIXTURE, "metadata", self._tmp.name)
+        self.assertEqual(
+            [e for e in report.errors if e.path.endswith(".history.jsonl")],
+            [],
+        )
+
     def test_malformed_file_isolated(self):
         parsed, report = _scan(SENPI_FIXTURE, "transcript", self._tmp.name)
         bad = [e for e in report.errors if "33333333" in e.path]
