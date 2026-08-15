@@ -1,0 +1,196 @@
+/*
+ * CAIRN Web — Strata design system tokens.
+ *
+ * This is the single source of truth for every visual value in the product.
+ * Components reference SEMANTIC tokens only. Raw scale values (--stone-700,
+ * --signal-400) are referenced here and nowhere else, so a theme override
+ * needs no component change.
+ *
+ * Scale: 4px base. Radii: small/engineered. Accent: sodium amber, reserved
+ * exclusively for HEAD / live / active state. Cyan is data-only.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Spacing: 4px base ---- */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+
+  /* ---- Neutrals: cold slate ---- */
+  --stone-950: #080b0f;
+  --stone-900: #0d1117;
+  --stone-850: #12181f;
+  --stone-800: #1a222c;
+  --stone-750: #161d25;
+  --stone-700: #26313d;
+  --stone-600: #3a4756;
+  --stone-500: #5a6878;
+  --stone-400: #8593a3;
+  --stone-300: #b3bfcb;
+  --stone-200: #d6dee6;
+  --stone-100: #eef2f6;
+  --stone-50: #f8fafc;
+
+  /* ---- Accent: sodium amber (HEAD / live / active only) ---- */
+  --signal-600: #b56a00;
+  --signal-500: #e08600;
+  --signal-400: #ffa424;
+  --signal-300: #ffc46b;
+
+  /* ---- Data hues: evidence and charts only, never chrome ---- */
+  --data-lexical: #e8a13a;
+  --data-vector: #4fc3d9;
+  --data-cold: #7fa8d9;
+  --data-warm: #e0885f;
+
+  /* ---- Semantic: always paired with icon + text, never color alone ---- */
+  --ok-500: #3f9e6a;
+  --warn-500: #c9911f;
+  --error-500: #d4544b;
+  --info-500: #5b8fc7;
+  --ok-surface: rgb(63 158 106 / 0.12);
+  --warn-surface: rgb(201 145 31 / 0.12);
+  --error-surface: rgb(212 84 75 / 0.12);
+  --info-surface: rgb(91 143 199 / 0.12);
+
+  /* ---- Surfaces ---- */
+  --surface-base: var(--stone-900);
+  --surface-raised: var(--stone-850);
+  --surface-stratum: var(--stone-800);
+  --surface-overlay: var(--stone-750);
+  --surface-sunken: var(--stone-950);
+  --border-hairline: var(--stone-700);
+  --border-strong: var(--stone-600);
+  --focus-ring: var(--signal-400);
+
+  /* ---- Text ---- */
+  --text-primary: var(--stone-100);
+  --text-secondary: var(--stone-300);
+  --text-tertiary: var(--stone-400);
+  --text-inverse: var(--stone-950);
+
+  /* ---- Type families ---- */
+  --font-display: "Söhne Breit", "GT America Expanded", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Söhne", "Untitled Sans", "Pretendard", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  /* ---- Type scale ---- */
+  --text-display: 2.5rem/1.1;
+  --text-h1: 2rem/1.15;
+  --text-h2: 1.5rem/1.2;
+  --text-h3: 1.25rem/1.3;
+  --text-h4: 1.0625rem/1.4;
+  --text-body: 0.9375rem/1.6;
+  --text-small: 0.8125rem/1.5;
+  --text-caption: 0.75rem/1.4;
+  --text-numeric: 0.875rem/1.4;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+
+  /* ---- Radii ---- */
+  --radius-none: 0;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-stratum: 0 1px 0 0 var(--stone-700);
+  --shadow-raised: 0 2px 8px -2px rgb(0 0 0 / 0.5);
+  --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 0.6);
+  --glow-head: 0 -1px 0 0 var(--signal-400), 0 0 16px -4px rgb(255 164 36 / 0.3);
+
+  /* ---- Motion ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 400ms;
+  --stagger-step: 24ms;
+
+  /* ---- Layout ---- */
+  --rail-width: 264px;
+  --rail-collapsed: 56px;
+  --drawer-width: 400px;
+  --content-max: 1120px;
+  --measure: 68ch;
+  --z-rail: 10;
+  --z-drawer: 20;
+  --z-overlay: 30;
+  --z-toast: 40;
+
+  /* ---- Breakpoints (documented; media queries inline the values) ---- */
+  --bp-sm: 640px;
+  --bp-md: 900px;
+  --bp-lg: 1200px;
+  --bp-xl: 1600px;
+
+  /* ---- Control sizing: WCAG 2.2 SC 2.5.8 floor ---- */
+  --target-min: 24px;
+  --target-touch: 44px;
+}
+
+/*
+ * Light theme. Overrides only semantic names — no component knows a theme
+ * exists. Contrast pairs verified against WCAG 2.2 AA (4.5:1 body, 3:1 UI).
+ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-base: var(--stone-50);
+  --surface-raised: #ffffff;
+  --surface-stratum: var(--stone-100);
+  --surface-overlay: #ffffff;
+  --surface-sunken: var(--stone-200);
+  --border-hairline: var(--stone-200);
+  --border-strong: var(--stone-400);
+  --focus-ring: var(--signal-600);
+
+  --text-primary: var(--stone-950);
+  --text-secondary: #33404e;
+  --text-tertiary: #4d5a68;
+  --text-inverse: var(--stone-50);
+
+  --data-lexical: #9c6410;
+  --data-vector: #14697e;
+  --data-cold: #35618f;
+  --data-warm: #9c4a25;
+
+  --ok-500: #1f6d44;
+  --warn-500: #7f5a06;
+  --error-500: #a52c25;
+  --info-500: #2f5f92;
+  --ok-surface: rgb(31 109 68 / 0.1);
+  --warn-surface: rgb(127 90 6 / 0.1);
+  --error-surface: rgb(165 44 37 / 0.1);
+  --info-surface: rgb(47 95 146 / 0.1);
+
+  --shadow-stratum: 0 1px 0 0 var(--stone-200);
+  --shadow-raised: 0 2px 8px -2px rgb(8 11 15 / 0.14);
+  --shadow-overlay: 0 12px 32px -8px rgb(8 11 15 / 0.2);
+  --glow-head: 0 -1px 0 0 var(--signal-600), 0 0 16px -6px rgb(181 106 0 / 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --stagger-step: 0ms;
+  }
+}
