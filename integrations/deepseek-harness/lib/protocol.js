@@ -131,6 +131,23 @@ export function decodeApiError(value, status) {
         };
     }
 }
+// Typed handling for sessions-KB chunk metadata. Returns undefined when the
+// required continuation fields (session_uid, seq_start) are missing or
+// malformed so callers can exclude the segment instead of failing the packet.
+// An invalid optional seq_end is dropped on its own; ordering never depends on it.
+export function decodeSessionSegmentMetadata(value) {
+    const sessionUid = value.session_uid;
+    if (typeof sessionUid !== 'string' || sessionUid.length === 0 || sessionUid.length > 256)
+        return undefined;
+    const seqStart = value.seq_start;
+    if (typeof seqStart !== 'number' || !Number.isSafeInteger(seqStart) || seqStart < 0)
+        return undefined;
+    const seqEnd = value.seq_end;
+    if (typeof seqEnd !== 'number' || !Number.isSafeInteger(seqEnd) || seqEnd < seqStart) {
+        return { sessionUid, seqStart };
+    }
+    return { sessionUid, seqStart, seqEnd };
+}
 export function selectMetadata(source, keys, maxBytes) {
     const output = Object.create(null);
     let used = 2;

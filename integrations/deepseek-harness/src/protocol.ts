@@ -183,6 +183,30 @@ export function decodeApiError(value: unknown, status: number): CairnApiError {
   }
 }
 
+export interface SessionSegmentMetadata {
+  readonly sessionUid: string
+  readonly seqStart: number
+  readonly seqEnd?: number
+}
+
+// Typed handling for sessions-KB chunk metadata. Returns undefined when the
+// required continuation fields (session_uid, seq_start) are missing or
+// malformed so callers can exclude the segment instead of failing the packet.
+// An invalid optional seq_end is dropped on its own; ordering never depends on it.
+export function decodeSessionSegmentMetadata(
+  value: Readonly<Record<string, JsonValue>>,
+): SessionSegmentMetadata | undefined {
+  const sessionUid = value.session_uid
+  if (typeof sessionUid !== 'string' || sessionUid.length === 0 || sessionUid.length > 256) return undefined
+  const seqStart = value.seq_start
+  if (typeof seqStart !== 'number' || !Number.isSafeInteger(seqStart) || seqStart < 0) return undefined
+  const seqEnd = value.seq_end
+  if (typeof seqEnd !== 'number' || !Number.isSafeInteger(seqEnd) || seqEnd < seqStart) {
+    return { sessionUid, seqStart }
+  }
+  return { sessionUid, seqStart, seqEnd }
+}
+
 export function selectMetadata(
   source: Readonly<Record<string, JsonValue>>,
   keys: readonly string[],

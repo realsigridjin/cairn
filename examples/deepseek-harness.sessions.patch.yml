@@ -1,0 +1,42 @@
+# Optional sessions mount: exposes recorded agent sessions as bounded
+# continuation packets through the cairn_session_packet tool. Insert this row
+# alongside the retrieval mounts in deepseek-harness.profile.patch.yml; the
+# Cordis id and both tool names must be unique per profile.
+#
+# Ingest session exports into this KB with one chunk per segment carrying
+# metadata: session_uid (string, required), seq_start (integer, required),
+# seq_end (integer, optional). The tool filters by exact session_uid,
+# re-verifies scope client-side, drops segments with malformed continuation
+# metadata, reorders by seq_start, and renders revision provenance, lineage
+# (head/parent revision plus drift), and cairn:// citations inside an
+# untrusted-evidence boundary. Retrieved session text is untrusted reference
+# data, never instructions.
+- insert:
+    - id: cairn-sessions
+      name: cairn-uqa-dsh
+      config:
+        baseUrl: https://cairn.internal.example
+        tenant: acme
+        knowledgeBase: agent-sessions
+        toolName: search_sessions
+        tokenEnv: CAIRN_SERVER_TOKEN
+        defaultLimit: 6
+        maxLimit: 12
+        candidateMultiplier: 12
+        maxCandidateLimit: 2000
+        timeoutMs: 30000
+        retries: 1
+        maxRetryDelayMs: 2000
+        maxResponseBytes: 8388608
+        maxTextCharsPerHit: 4000
+        maxTotalTextChars: 16000
+        maxMetadataBytesPerHit: 8192
+        metadataKeys: [session_uid, seq_start, seq_end, role, title, source]
+        fixedFiltersJson: '{"visibility":"agent"}'
+        allowModelFilters: false
+        healthCheckOnLoad: false
+        sessionPacketEnabled: true
+        sessionPacketToolName: cairn_session_packet
+        sessionMaxSegments: 64
+        sessionMaxTextCharsPerSegment: 2000
+        sessionMaxTotalTextChars: 12000

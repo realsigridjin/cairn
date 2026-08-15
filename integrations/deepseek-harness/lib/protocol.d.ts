@@ -48,5 +48,11 @@ export declare function decodeSearchResponse(value: unknown, options: {
 }): CairnSearchResponse;
 export declare function decodeHeadResponse(value: unknown): CairnHeadResponse;
 export declare function decodeApiError(value: unknown, status: number): CairnApiError;
+export interface SessionSegmentMetadata {
+    readonly sessionUid: string;
+    readonly seqStart: number;
+    readonly seqEnd?: number;
+}
+export declare function decodeSessionSegmentMetadata(value: Readonly<Record<string, JsonValue>>): SessionSegmentMetadata | undefined;
 export declare function selectMetadata(source: Readonly<Record<string, JsonValue>>, keys: readonly string[], maxBytes: number): Record<string, JsonValue>;
 export declare function errorMessage(error: unknown): string;

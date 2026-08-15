@@ -23,6 +23,12 @@ export interface Config {
     fixedFiltersJson?: string;
     allowModelFilters?: boolean;
     healthCheckOnLoad?: boolean;
+    sessionPacketEnabled?: boolean;
+    sessionPacketToolName?: string;
+    sessionPacketToolDescription?: string;
+    sessionMaxSegments?: number;
+    sessionMaxTextCharsPerSegment?: number;
+    sessionMaxTotalTextChars?: number;
 }
 export declare const Config: import("@deepseek-ai/schemastery").Schema<Config>;
 export declare function apply(ctx: Context, config: Config): Promise<void>;

@@ -47,3 +47,9 @@
         fixedFiltersJson: '{"visibility":"agent"}'
         allowModelFilters: false
         healthCheckOnLoad: false
+
+# A sessions KB mounts the same way as a third instance: unique Cordis id,
+# unique toolName, and sessionPacketEnabled: true to also register the
+# cairn_session_packet continuation tool (exact session_uid filter, seq_start
+# ordering, bounded packet with lineage and citations). See
+# examples/deepseek-harness.sessions.patch.yml for the complete row.
