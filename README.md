@@ -140,7 +140,7 @@ cargo build --release --no-default-features --bin cairn
 For optional UQA warm execution, place this directory at `uqa-rs/integrations/cairn` and run:
 
 ```bash
-cargo build --release --features uqa --bin cairn
+cargo build --release --manifest-path Cargo.uqa.toml --features uqa --bin cairn
 ```
 
 Read [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) before enabling UQA. It remains opt-in because it has its own licensing boundary.

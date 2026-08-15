@@ -11,11 +11,11 @@ fmt:
 test:
 	cargo test --all-targets --no-default-features
 test-uqa:
-	cargo test --all-targets --features uqa
+	cargo test --manifest-path Cargo.uqa.toml --all-targets --features uqa
 clippy:
 	cargo clippy --all-targets --no-default-features -- -D warnings
 clippy-uqa:
-	cargo clippy --all-targets --features uqa -- -D warnings
+	cargo clippy --manifest-path Cargo.uqa.toml --all-targets --features uqa -- -D warnings
 static:
 	python3 scripts/static_validate.py
 check-dsh:

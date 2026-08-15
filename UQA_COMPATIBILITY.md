@@ -10,8 +10,8 @@ and parameters, lexical `text_match`, vector `knn_match`, analyzer/index setup,
 and scalar/vector values used by `src/uqa.rs`. Pin the exact UQA commit and run:
 
 ```bash
-cargo test --all-targets --features uqa
-cargo clippy --all-targets --features uqa -- -D warnings
+cargo test --manifest-path Cargo.uqa.toml --all-targets --features uqa
+cargo clippy --manifest-path Cargo.uqa.toml --all-targets --features uqa -- -D warnings
 ```
 
 CAIRN owns durable revision lineage, object layout, cold search, global stats,

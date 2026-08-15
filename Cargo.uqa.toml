@@ -1,3 +1,5 @@
+# UQA-RS checkout manifest. Use this file only after installing this crate at
+# uqa-rs/integrations/cairn; it pins the sibling crates under ../../crates.
 [package]
 name = "cairn-uqa"
 version = "1.0.0"
@@ -18,8 +20,7 @@ path = "src/bin/cairn/main.rs"
 
 [features]
 default = []
-# Standalone checkouts must not resolve optional UQA path dependencies. The
-# warm-UQA build uses Cargo.uqa.toml inside a full UQA-RS checkout.
+uqa = ["dep:uqa-engine", "dep:uqa-core"]
 
 [dependencies]
 anyhow = "1"
@@ -49,8 +50,10 @@ toml = "0.8"
 uuid = { version = "1", features = ["v4", "serde"] }
 zstd = "0.13"
 
-# This crate can be copied to uqa-rs/integrations/cairn. Cargo.uqa.toml keeps
-# the explicit path pins for that layout without breaking standalone checkouts.
+# This crate is designed to live at uqa-rs/integrations/cairn.
+# Keep the dependency path explicit so the integration is pinned to the checked-out UQA tree.
+uqa-engine = { path = "../../crates/uqa-engine", optional = true }
+uqa-core = { path = "../../crates/uqa-core", optional = true }
 
 [dev-dependencies]
 rand = "0.9"
@@ -63,7 +66,6 @@ resolver = "2"
 [lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("uqa"))'] }
 
 [lints.clippy]
 all = "warn"

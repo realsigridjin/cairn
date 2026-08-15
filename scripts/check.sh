@@ -7,6 +7,6 @@ cargo clippy --all-targets --no-default-features -- -D warnings
 python3 scripts/static_validate.py
 
 if [ "${CAIRN_CHECK_UQA:-0}" = "1" ]; then
-  cargo test --all-targets --features uqa
-  cargo clippy --all-targets --features uqa -- -D warnings
+  cargo test --manifest-path Cargo.uqa.toml --all-targets --features uqa
+  cargo clippy --manifest-path Cargo.uqa.toml --all-targets --features uqa -- -D warnings
 fi

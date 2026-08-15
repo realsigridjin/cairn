@@ -6,12 +6,16 @@ def need(rel):
  p=root/rel
  if not p.is_file() or p.stat().st_size==0: errors.append(f'missing/empty: {rel}')
  return p
-required=['Cargo.toml','README.md','DEEPSEEK_HARNESS.md','REVIEW.md','VALIDATION.md','SESSION_CONTINUITY.md','src/server.rs','src/model.rs','src/runtime.rs','src/bin/cairn/cli.rs','integrations/deepseek-harness/package.json','integrations/deepseek-harness/cordis.patch.yml','integrations/deepseek-harness/src/index.ts','integrations/deepseek-harness/src/client.ts','integrations/deepseek-harness/src/protocol.ts','integrations/deepseek-harness/lib/index.js','integrations/deepseek-harness/test/plugin.test.mjs','integrations/deepseek-harness/bin/cairn-dsh-doctor.mjs','scripts/install_dsh_bundle.sh','web/package.json','web/src/server.ts','web/src/session-packet.ts','web/src/history-store.ts','web/test/session-packet.test.ts','web/test/history-durable.test.ts','dist/cairn-uqa-dsh-1.0.0.tgz','dist/cairn-uqa-dsh-1.0.0.tgz.sha256']
+required=['Cargo.toml','Cargo.uqa.toml','README.md','DEEPSEEK_HARNESS.md','REVIEW.md','VALIDATION.md','SESSION_CONTINUITY.md','src/server.rs','src/model.rs','src/runtime.rs','src/bin/cairn/cli.rs','integrations/deepseek-harness/package.json','integrations/deepseek-harness/cordis.patch.yml','integrations/deepseek-harness/src/index.ts','integrations/deepseek-harness/src/client.ts','integrations/deepseek-harness/src/protocol.ts','integrations/deepseek-harness/lib/index.js','integrations/deepseek-harness/test/plugin.test.mjs','integrations/deepseek-harness/bin/cairn-dsh-doctor.mjs','scripts/install_dsh_bundle.sh','web/package.json','web/src/server.ts','web/src/session-packet.ts','web/src/history-store.ts','web/test/session-packet.test.ts','web/test/history-durable.test.ts','dist/cairn-uqa-dsh-1.0.0.tgz','dist/cairn-uqa-dsh-1.0.0.tgz.sha256']
 for rel in required: need(rel)
 try:
  with (root/'Cargo.toml').open('rb') as f: cargo=tomllib.load(f)
  if cargo['package']['version']!='1.0.0': errors.append('Cargo version must be 1.0.0')
  if cargo.get('features',{}).get('default')!=[]: errors.append('UQA must remain opt-in')
+ if 'uqa-engine' in (root/'Cargo.toml').read_text() or 'uqa-core' in (root/'Cargo.toml').read_text(): errors.append('standalone Cargo.toml must not resolve UQA path dependencies')
+ with (root/'Cargo.uqa.toml').open('rb') as f: uqa_cargo=tomllib.load(f)
+ if uqa_cargo['package']['version']!='1.0.0': errors.append('Cargo.uqa version must be 1.0.0')
+ if uqa_cargo.get('features',{}).get('uqa')!=['dep:uqa-engine','dep:uqa-core']: errors.append('Cargo.uqa must expose the UQA feature')
 except Exception as e: errors.append(f'Cargo parse: {e}')
 try:
  pkg=json.loads((root/'integrations/deepseek-harness/package.json').read_text())
