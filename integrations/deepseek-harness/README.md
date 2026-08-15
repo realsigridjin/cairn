@@ -1,4 +1,4 @@
-# `cairn-uqa-dsh` 2.1
+# `cairn-uqa-dsh` 1.0
 
 Native DeepSeek Harness tool bundle for CAIRN. It registers one bounded,
 read-only retrieval tool and preserves CAIRN revision provenance in both the
@@ -11,7 +11,7 @@ DeepSeek Harness agent
 cairn-uqa-dsh (Cordis plugin)
         │ authenticated, cancellable, bounded HTTP
         ▼
-CAIRN 2.1
+CAIRN 1.0
         ├─ OpenRouter query embedding
         ├─ cold BM25 + IVF/INT8 + FP16 rerank
         └─ optional warm UQA-RS execution
@@ -33,7 +33,7 @@ cairn serve --restrict-to-default-scope
 Install the prepacked bundle from the CAIRN repository root:
 
 ```bash
-dsh plugin --profile web add ./dist/cairn-uqa-dsh-2.1.0.tgz
+dsh plugin --profile web add ./dist/cairn-uqa-dsh-1.0.0.tgz
 dsh --profile web --dump-config
 dsh --profile web web
 ```

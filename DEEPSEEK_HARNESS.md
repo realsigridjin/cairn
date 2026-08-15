@@ -1,4 +1,4 @@
-# CAIRN 2.1 + DeepSeek Harness
+# CAIRN 1.0 + DeepSeek Harness
 
 CAIRN integrates with DeepSeek Harness as a **native Cordis tool bundle**. No
 Harness fork, agent-loop patch, shell wrapper, or MCP bridge is required.
@@ -11,7 +11,7 @@ DeepSeek Harness
                 cairn-uqa-dsh
                          │
                          ▼
-CAIRN 2.1 authenticated HTTP API
+CAIRN 1.0 authenticated HTTP API
   revision provenance / OpenRouter embedding / cold search / UQA warm search
 ```
 
@@ -19,10 +19,16 @@ CAIRN 2.1 authenticated HTTP API
 
 ```text
 integrations/deepseek-harness/   source, precompiled ESM, declarations, tests
-dist/cairn-uqa-dsh-2.1.0.tgz   installable bundle
+dist/cairn-uqa-dsh-1.0.0.tgz   installable bundle
 scripts/install_dsh_bundle.sh   install + dump-config + doctor helper
 examples/deepseek-harness.profile.patch.yml
 ```
+
+For importing and continuing prior DeepSeek Harness, Senpi/pi, Codex, and
+Claude Code sessions, see [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md).
+The retrieval boundary remains the same: imported history is untrusted
+evidence, while tenant, KB, credentials, budgets, and fixed filters stay
+trusted configuration.
 
 ## Local setup
 
@@ -191,6 +197,41 @@ profile-owned patch:
 
 For multiple KBs, mount multiple plugin instances with unique Cordis ids and
 unique tool names. See `examples/deepseek-harness.profile.patch.yml`.
+
+## Session-memory mount
+
+A second mount can expose imported coding-agent history without weakening the
+project-knowledge boundary. Keep project retrieval and session memory in
+separate knowledge bases and tool names:
+
+```yaml
+- id: cairn-session-memory
+  config:
+    baseUrl: http://127.0.0.1:8080
+    tenant: local
+    knowledgeBase: sessions
+    toolName: cairn_search_sessions
+    tokenEnv: CAIRN_SERVER_TOKEN
+    defaultLimit: 6
+    maxLimit: 12
+    metadataKeys:
+      - doc_type
+      - source
+      - session_uid
+      - root_session_id
+      - parent_id
+      - cwd
+      - repo_path
+      - git_branch
+      - model
+      - created_at_ms
+```
+
+The sessions KB is produced by the importer described in
+[SESSION_CONTINUITY.md](SESSION_CONTINUITY.md). `cairn_session_packet` turns an
+exact `session_uid` into a bounded continuation packet ordered by session
+sequence, not retrieval score. Imported history remains untrusted evidence; it
+must not be treated as instructions by the receiving agent.
 
 ## Doctor and release gates
 

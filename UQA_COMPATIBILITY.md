@@ -1,4 +1,4 @@
-# UQA-RS integration boundary — CAIRN 2.1.0
+# UQA-RS integration boundary — CAIRN 1.0.0
 
 Install CAIRN at `uqa-rs/integrations/cairn`. Optional path dependencies point to
 `../../crates/uqa-engine` and `../../crates/uqa-core`; default features remain

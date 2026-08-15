@@ -1,6 +1,8 @@
-# CAIRN 2.1
+# CAIRN 1.0
 
-CAIRN is a **revisioned, object-store-native retrieval runtime** for RAG and agent systems. It keeps durable search artifacts in an object store, serves cold knowledge bases with ranged reads, and can optionally promote hot revisions into a local UQA-RS database.
+CAIRN 1.0 is the **revisioned retrieval and cross-agent memory layer for DeepSeek Harness**. It is an object-store-native retrieval runtime that keeps durable search artifacts in an object store, serves cold knowledge bases with ranged reads, and can optionally promote hot revisions into a local UQA-RS database. For DeepSeek Harness it ships as a native Cordis tool bundle: the agent gets one bounded, read-only retrieval tool, and every answer is pinned to an immutable revision with `cairn://` citations.
+
+That revision pinning is what makes CAIRN a memory layer, not just a search box. A Harness session can record exactly which revision and chunks supported an answer, and another agent, Senpi/pi, Codex, Claude Code, or a fresh Harness session, can resume against the same evidence. The "Session continuity in 1.0" section below describes that architecture precisely.
 
 The developer goal is simple:
 
@@ -45,12 +47,9 @@ cairn query "이 문서에서 캐시 정책은 어떻게 동작하나요?"
 
 ---
 
-
 ## DeepSeek Harness in five minutes
 
-CAIRN 2.1 includes a native, precompiled DeepSeek Harness bundle. The model gets
-one read-only retrieval tool while URL, credentials, tenant/KB, historical
-revision, and infrastructure budgets remain trusted configuration.
+CAIRN 1.0 includes a native, precompiled DeepSeek Harness bundle. The model gets one read-only retrieval tool while URL, credentials, tenant/KB, historical revision, and infrastructure budgets remain trusted configuration.
 
 ```bash
 # Build a revision first.
@@ -68,10 +67,29 @@ export CAIRN_SERVER_TOKEN='the-same-value'
 dsh --profile web web
 ```
 
-The agent can now call `cairn_search`. Canonical results contain immutable
-revision, embedding, corpus-digest, score, and `cairn://` citation provenance.
-See [DEEPSEEK_HARNESS.md](DEEPSEEK_HARNESS.md) for remote profiles, multiple KBs,
-fixed authorization filters, and the complete security contract.
+The agent can now call `cairn_search`. Canonical results contain immutable revision, embedding, corpus-digest, score, and `cairn://` citation provenance. See [DEEPSEEK_HARNESS.md](DEEPSEEK_HARNESS.md) for remote profiles, multiple KBs, fixed authorization filters, and the complete security contract.
+
+## Session continuity in 1.0
+
+This is the headline architecture CAIRN 1.0 delivers, and it is worth being precise about what that means.
+
+**What this repository ships in 1.0:** the retrieval primitives plus the continuity tooling built on them.
+
+- Immutable, content-addressed revisions. A published revision can never silently change under a citation.
+- Revision provenance in every result: revision number, embedding provider/model/dimension, canonical live-corpus SHA-256, cold/warm mode, and calibrated score domain.
+- Stable `cairn://` citations, for example `cairn://acme/handbook/revision/42/chunk/doc-v3-c7`, recorded in DeepSeek Harness session logs as durable structured tool results.
+- Explicit HEAD/rollback semantics and a revision lineage chain (`parent_revision`), so "the same knowledge base as yesterday" is a checkable fact, not a hope.
+- `scripts/session_import.py`, a Python-stdlib importer that reads DeepSeek Harness, Senpi/pi, Codex, and Claude Code session stores; normalizes them into redacted chunks; and emits CAIRN-ready JSONL with deterministic, resumable identities.
+- A second DeepSeek Harness mount (`cairn_search_sessions`) plus the `cairn_session_packet` tool, which turns an exact session into a bounded, sequence-ordered continuation packet.
+- A same-origin web console for scope health, hybrid search, imported session lookup, continuation packets, and server-owned query history that can survive a web-process restart.
+
+**The 1.0 continuity model:** a session's retrieval history is its memory. Because each result carries its revision and corpus digest, a continuation works like this:
+
+1. The originating session (DeepSeek Harness, Senpi/pi, Codex, or Claude Code) is imported with `scripts/session_import.py` into a dedicated CAIRN sessions knowledge base.
+2. A new session searches that KB — or calls `cairn_session_packet` with an exact `session_uid` — and pins the recorded revision and corpus SHA-256.
+3. If HEAD has advanced, the revision comparison surfaces drift while the recorded corpus digest identifies the exact corpus the prior answer used. Citations remain valid as identifiers; replaying against the pinned revision requires explicitly enabling historical revision access on the server, and an old revision can predate a deletion, so drift is surfaced rather than hidden.
+
+DeepSeek Harness's own session store (`~/.dsh/sessions/**/session.jsonl.zstd` plus the `session_projcache.json` and `workspace.json` indexes) is a first-class input — a fresh Harness session can search and continue its own history, not just other agents'. See [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) for the importer pipeline, privacy tiers, and checkpoint semantics, and [examples/deepseek-harness.sessions.patch.yml](examples/deepseek-harness.sessions.patch.yml) for the mount.
 
 ## Why CAIRN exists
 
@@ -340,7 +358,7 @@ cairn rollback 2
 
 The next ingest does **not** reuse revision 3. CAIRN selects the next unused revision number, preserving immutable revision identity.
 
-Historical HTTP search is disabled by default because an old revision can predate a deletion.
+Historical HTTP search is disabled by default because an old revision can predate a deletion. Enable it only when you have a deliberate continuity or audit use case, and treat it as a privileged operation.
 
 ## Full snapshots vs advanced deltas
 
@@ -386,7 +404,9 @@ curl -sS \
   http://127.0.0.1:8080/v1/acme/kb/handbook/search | jq
 ```
 
-Unknown request fields are rejected in 2.0, catching client typos early. The server does not require `OPENROUTER_API_KEY` merely to boot: explicit-vector and lexical-only requests still work. A request that actually needs automatic embedding fails with an actionable error when the key is absent.
+Unknown request fields are rejected, catching client typos early. The server does not require `OPENROUTER_API_KEY` merely to boot: explicit-vector and lexical-only requests still work. A request that actually needs automatic embedding fails with an actionable error when the key is absent.
+
+`/health` and `/version` are public. `/head` and `/search` use bearer authentication when `CAIRN_SERVER_TOKEN` is set, and return structured errors with a machine-readable `code`, a `retryable` flag, and a `request_id` for log correlation.
 
 ## R2 / Cloudflare
 
@@ -433,11 +453,11 @@ Effectful shell:
 
 Project rules include `#![forbid(unsafe_code)]`, checked external size conversions, bounded remote I/O/concurrency, failure-atomic file replacement, immutable IDs + tombstones, and opt-in UQA integration.
 
-In 2.0 the query-embedding cache is bounded by an approximate memory budget as well as entry count, preventing very high-dimensional embeddings from turning a harmless entry cap into excessive RAM usage.
+The query-embedding cache is bounded by an approximate memory budget as well as entry count, preventing very high-dimensional embeddings from turning a harmless entry cap into excessive RAM usage.
 
-## What changed in 2.1
+## What's new in 1.0
 
-2.1 preserves the Phase-2 retrieval core and adds a native agent boundary:
+1.0 is the first public release, framed around the DeepSeek Harness ecosystem:
 
 1. installable `cairn-uqa-dsh` Cordis bundle with canonical typed results;
 2. cooperative Harness cancellation and tool-call correlation;
@@ -445,7 +465,8 @@ In 2.0 the query-embedding cache is bounded by an approximate memory budget as w
 4. optional one-tenant/KB server scope fence;
 5. immutable embedding/corpus provenance in search results and `cairn://` citations;
 6. bounded retries, response acquisition, model context, and metadata;
-7. explicit untrusted-evidence rendering and fixed deployment filters.
+7. explicit untrusted-evidence rendering and fixed deployment filters;
+8. the cross-agent session continuity architecture described above, delivered on revisioned citations and corpus digests.
 
 See [REVIEW.md](REVIEW.md) for the detailed engineering review.
 
@@ -493,9 +514,9 @@ Another writer published while your embedding/index build was running. This is e
 
 IVF/vector retrieval and post-retrieval metadata filtering can be approximate. Increase the candidate pool or use a filter-aware strategy for highly selective filters.
 
-### Config fails after upgrading to 2.0
+### Config fails after upgrading
 
-2.0 rejects unknown fields. Run:
+CAIRN rejects unknown fields. Run:
 
 ```bash
 cairn config
@@ -511,6 +532,7 @@ and fix the field named in the parse error. This is deliberate: configuration ty
 - Historical revision access deserves separate authorization.
 - Use HTTPS for non-loopback OpenRouter/object-gateway endpoints.
 - CAIRN verifies content-addressed artifacts and bounded decompression/decoding before use.
+- Retrieved documents are data, not agent instructions. The Harness bundle renders evidence inside an explicit untrusted-evidence boundary; keep that boundary intact in any custom integration.
 
 ## Limitations
 
@@ -519,6 +541,7 @@ and fix the field named in the parse error. This is deliberate: configuration ty
 - ANN retrieval is approximate by design.
 - Warm UQA requires an explicit compatible UQA-RS checkout.
 - Production calibration requires your own labeled relevance data.
+- The session importer ships as a Python-stdlib ETL with metadata-first and transcript opt-in tiers; DeepSeek Harness's pre-release session format may still change upstream and is version-pinned at import time.
 
 ## Repository map
 
@@ -532,9 +555,11 @@ src/
   index/              immutable shard format/build/read
   cache.rs            disposable warm cache
   uqa.rs              optional UQA adapter
-  bin/cairn/           single developer CLI
+  bin/cairn/          single developer CLI
+integrations/deepseek-harness/  native DSH bundle (source, ESM, tests)
+web/                   same-origin browser console and BFF
 cloudflare/r2-gateway/ R2 gateway
-examples/              sample config/corpus/scoring
+examples/              sample config/corpus/scoring/profile patch
 tests/                 integration and CLI tests
 scripts/               validation/install helpers
 ```

@@ -1,6 +1,6 @@
-# CAIRN 2.1 — full DeepSeek Harness integration review
+# CAIRN 1.0 — full DeepSeek Harness integration review
 
-This pass reviewed CAIRN 2.0 as a retrieval engine and as an agent-facing
+This pass reviewed the pre-1.0 retrieval engine and its agent-facing
 service. Priorities were immutable-revision correctness, Rust effect boundaries,
 HTTP security, the DeepSeek Harness native tool contract, and developer setup.
 
