@@ -16,6 +16,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { CairnClient, CairnClientError } from './cairn-client.ts'
 import { SEARCH_BOUNDS, type Scope, type WebConfig } from './config.ts'
 import { HistoryStore, type SearchRecord } from './history.ts'
+import { decodeStoredRecord } from './history-store.ts'
 import type { CairnHeadResponse, CairnSearchResponse, JsonValue } from './protocol.ts'
 import { errorMessage } from './protocol.ts'
 import { presentError, type ErrorPresentation } from './view/errors.ts'
@@ -25,10 +26,18 @@ import {
   connectPage,
   notFoundPage,
   scopeHomePage,
+  sessionPacketPage,
   sessionsPage,
   workbenchPage,
 } from './view/pages.ts'
 import { serveStatic } from './static.ts'
+import {
+  PACKET_BOUNDS,
+  buildSessionPacket,
+  validateSegmentLimit,
+  validateSessionUid,
+  type SessionPacket,
+} from './session-packet.ts'
 
 export interface AppOptions {
   readonly config: WebConfig
@@ -212,10 +221,25 @@ export function createApp(options: AppOptions): App {
         sendApiError(response, 400, 'INVALID_JSON', errorMessage(error), requestId)
         return
       }
-      const records = Array.isArray(body.records) ? (body.records as SearchRecord[]) : undefined
-      if (records === undefined) {
+      const rawRecords = Array.isArray(body.records) ? body.records : undefined
+      if (rawRecords === undefined) {
         sendApiError(response, 400, 'INVALID_REQUEST', 'records must be an array', requestId)
         return
+      }
+      const records: SearchRecord[] = []
+      for (const [index, candidate] of rawRecords.entries()) {
+        const record = decodeStoredRecord(candidate)
+        if (record === undefined) {
+          sendApiError(
+            response,
+            400,
+            'INVALID_REQUEST',
+            `records[${index}] is not a valid search history record`,
+            requestId,
+          )
+          return
+        }
+        records.push(record)
       }
       const result = history.importSessions(records)
       sendJson(response, 200, result)
@@ -235,6 +259,30 @@ export function createApp(options: AppOptions): App {
 
     if (path === '/api/sessions' && method === 'GET') {
       sendJson(response, 200, { sessions: history.sessions() })
+      return
+    }
+
+    /**
+     * Continuation packet for one imported session, by exact `session_uid`.
+     *
+     * The uid travels in the query string rather than the path because it is
+     * free-form text from another tool's identity scheme (`source:native-id`),
+     * and path segments would force a second encoding layer over values that
+     * already contain colons and slashes.
+     */
+    if (path === '/api/sessions/packet' && method === 'GET') {
+      const outcome = await loadPacket(url.searchParams, requestId)
+      if (outcome.status === 'ok') {
+        sendJson(response, 200, { ...outcome.packet, requestId })
+      } else {
+        sendApiError(
+          response,
+          outcome.status_code,
+          outcome.code,
+          outcome.message,
+          outcome.requestId ?? requestId,
+        )
+      }
       return
     }
 
@@ -484,12 +532,157 @@ export function createApp(options: AppOptions): App {
           shell: shell('Sessions'),
           sessions: history.sessions(),
           records: history.list({ pageSize: 50 }).records,
+          sessionsScope: config.sessionsScope,
+          sessionUid: url.searchParams.get('uid') ?? '',
+        }).value,
+      )
+      return
+    }
+
+    if (path === '/sessions/packet' && method === 'GET') {
+      await refreshConnection()
+      const scope = config.sessionsScope
+      const rawUid = url.searchParams.get('uid') ?? ''
+      const shellOptions = shell('Continuation packet', scope)
+
+      if (scope === undefined || rawUid.trim().length === 0) {
+        sendHtml(
+          response,
+          200,
+          sessionPacketPage({
+            shell: shellOptions,
+            scope,
+            sessionUid: rawUid,
+          }).value,
+        )
+        return
+      }
+
+      const outcome = await loadPacket(url.searchParams, requestId)
+      if (outcome.status === 'ok') {
+        sendHtml(
+          response,
+          200,
+          sessionPacketPage({
+            shell: shellOptions,
+            scope,
+            sessionUid: outcome.packet.sessionUid,
+            packet: outcome.packet,
+          }).value,
+        )
+        return
+      }
+      const presentation = presentError(outcome.code, outcome.retryable)
+      sendHtml(
+        response,
+        outcome.status_code,
+        sessionPacketPage({
+          shell: shellOptions,
+          scope,
+          sessionUid: rawUid,
+          error: {
+            presentation,
+            message: outcome.message,
+            ...(outcome.requestId === undefined ? {} : { requestId: outcome.requestId }),
+            ...(presentation.retryable ? { retryHref: url.pathname + url.search } : {}),
+          },
         }).value,
       )
       return
     }
 
     sendHtml(response, 404, notFoundPage(shell('Not found'), path).value)
+  }
+
+  type PacketOutcome =
+    | { readonly status: 'ok'; readonly packet: SessionPacket }
+    | {
+        readonly status: 'error'
+        readonly status_code: number
+        readonly code: string
+        readonly message: string
+        readonly retryable: boolean
+        readonly requestId?: string
+      }
+
+  /**
+   * Shared by the JSON and HTML packet routes so both answer identically.
+   * HEAD is resolved first and separately: without it there is no drift state,
+   * but a HEAD failure must not deny the packet itself, so it degrades to
+   * `drift: unknown` rather than erroring.
+   */
+  async function loadPacket(params: URLSearchParams, requestId: string): Promise<PacketOutcome> {
+    const scope = config.sessionsScope
+    if (scope === undefined) {
+      return {
+        status: 'error',
+        status_code: 404,
+        code: 'SESSIONS_KB_NOT_CONFIGURED',
+        message: 'no sessions knowledge base is configured (set CAIRN_WEB_SESSIONS_SCOPE)',
+        retryable: false,
+      }
+    }
+
+    const uid = validateSessionUid(params.get('uid'))
+    if (typeof uid !== 'string') {
+      return {
+        status: 'error',
+        status_code: 400,
+        code: 'INVALID_REQUEST',
+        message: uid.error,
+        retryable: false,
+      }
+    }
+    const limit = validateSegmentLimit(params.get('limit'))
+    if (typeof limit !== 'number') {
+      return {
+        status: 'error',
+        status_code: 400,
+        code: 'INVALID_REQUEST',
+        message: limit.error,
+        retryable: false,
+      }
+    }
+
+    let head: CairnHeadResponse | undefined
+    try {
+      head = await client.head(scope.tenant, scope.knowledgeBase, { requestId })
+    } catch {
+      head = undefined
+    }
+
+    try {
+      const result = await client.sessionChunks({
+        tenant: scope.tenant,
+        knowledgeBase: scope.knowledgeBase,
+        sessionUid: uid,
+        limit: PACKET_BOUNDS.maxSegments,
+        candidateLimit: PACKET_BOUNDS.candidateLimit,
+        requestId,
+      })
+      return {
+        status: 'ok',
+        packet: buildSessionPacket({
+          tenant: scope.tenant,
+          knowledgeBase: scope.knowledgeBase,
+          sessionUid: uid,
+          response: result,
+          head,
+          limit,
+          maxMetadataBytesPerHit: config.maxMetadataBytesPerHit,
+        }),
+      }
+    } catch (error) {
+      const mapped = mapError(error)
+      return {
+        status: 'error',
+        status_code: mapped.status,
+        code: mapped.code,
+        message: mapped.message,
+        retryable: mapped.retryable,
+        ...(mapped.requestId === undefined ? {} : { requestId: mapped.requestId }),
+      }
+    }
   }
 
   type SearchOutcome =
@@ -684,7 +877,9 @@ export function parseSearchParams(input: {
 
 function numberOr(raw: string | undefined, fallback: number): number | undefined {
   if (raw === undefined || raw.trim().length === 0) return fallback
-  const parsed = Number(raw)
+  const trimmed = raw.trim()
+  if (!/^[0-9]+$/u.test(trimmed)) return undefined
+  const parsed = Number(trimmed)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 

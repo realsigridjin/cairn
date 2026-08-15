@@ -38,6 +38,9 @@ test('parseSearchParams enforces the documented bounds', () => {
   assert.deepEqual(parseSearchParams({ q: 'x', limit: '1001' }), {
     error: 'limit must be an integer in 1..=1000',
   })
+  assert.deepEqual(parseSearchParams({ q: 'x', limit: '0x10' }), {
+    error: 'limit must be an integer in 1..=1000',
+  })
   assert.deepEqual(parseSearchParams({ q: 'x', limit: '50', candidateLimit: '10' }), {
     error: 'candidate_limit must be >= limit',
   })
@@ -501,12 +504,46 @@ test('POST /api/history/import accepts an agent session and is idempotent', asyn
   assert.match(page, /imported/u)
 })
 
+test('POST /api/history/import rejects malformed records before persistence', async t => {
+  const app = await startApp({ routes: baseRoutes() })
+  t.after(() => app.close())
+
+  const response = await fetch(`${app.origin}/api/history/import`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      records: [
+        {
+          queryId: 'bad-import',
+          sessionId: 'agent-42',
+          tenant: 'acme',
+          knowledgeBase: 'handbook',
+          requestId: 'r-bad',
+          createdAtUnixMs: 'not-a-number',
+          latencyMs: 10,
+          request: { query: 'q', limit: 1, candidateLimit: 1, filters: {} },
+          outcome: { status: 'error', code: 'X', message: 'bad', retryable: false },
+        },
+      ],
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = (await response.json()) as { error: { code: string; message: string } }
+  assert.equal(body.error.code, 'INVALID_REQUEST')
+  assert.match(body.error.message, /records\[0\]/u)
+  assert.equal(app.app.history.size, 0)
+})
+
 test('an empty history renders the documented empty state', async t => {
   const app = await startApp({ routes: baseRoutes() })
   t.after(() => app.close())
 
   const body = await (await fetch(`${app.origin}/sessions`)).text()
-  assert.match(body, /No retrieval sessions recorded yet/u)
+  // The page distinguishes the two kinds of "session", so each has its own
+  // empty state and its own remedy.
+  assert.match(body, /No searches recorded yet/u)
+  assert.match(body, /Run a search from the workbench/u)
+  assert.match(body, /No sessions knowledge base is configured/u)
 })
 
 test('static assets are served and traversal is refused', async t => {

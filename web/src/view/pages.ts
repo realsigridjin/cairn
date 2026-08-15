@@ -7,6 +7,7 @@
 import type { Scope, WebConfig } from '../config.ts'
 import type { SearchRecord, SessionSummary } from '../history.ts'
 import type { CairnHeadResponse, CairnSearchResponse } from '../protocol.ts'
+import type { SessionPacket } from '../session-packet.ts'
 import { SEARCH_BOUNDS } from '../config.ts'
 import type { ErrorPresentation } from './errors.ts'
 import {
@@ -16,10 +17,12 @@ import {
   errorState,
   modeChip,
   notice,
+  packetLookupForm,
   provenanceStrip,
   resultList,
   resultSummary,
   scopeRail,
+  sessionPacketSection,
   sessionSummaryList,
   sessionTimeline,
   strataRail,
@@ -84,6 +87,7 @@ export function layout(options: ShellOptions, main: SafeHtml): SafeHtml {
           <h2 class="t-caption" id="rail-nav">Navigate</h2>
           <a class="btn" data-variant="ghost" href="/connect">Connection</a>
           <a class="btn" data-variant="ghost" href="/sessions">Sessions</a>
+          <a class="btn" data-variant="ghost" href="/sessions/packet">Continuation packet</a>
         </section>
       </nav>
 
@@ -433,30 +437,170 @@ function zeroHits(
 
 /* ---------- /sessions ---------- */
 
+/**
+ * Two different things are called a "session" in this product, and conflating
+ * them is the mistake this page exists to prevent:
+ *
+ *   - **Query history** is server-owned. It is this console's own record of
+ *     searches it ran. CAIRN stores no query log, so nothing else has it.
+ *   - **CAIRN session memory** is corpus. It is prior coding-agent sessions
+ *     imported by `scripts/session_import.py`, ingested as ordinary revisioned
+ *     chunks, and retrieved like any other evidence.
+ *
+ * The first is mutable and local. The second is immutable, revisioned, and
+ * untrusted. They are rendered as separate sections with separate provenance
+ * language, never interleaved in one list.
+ */
 export function sessionsPage(options: {
   readonly shell: ShellOptions
   readonly sessions: readonly SessionSummary[]
   readonly records: readonly SearchRecord[]
+  readonly sessionsScope?: Scope | undefined
+  readonly sessionUid?: string
 }): SafeHtml {
+  const scope = options.sessionsScope
+  const imported = options.sessions.filter(session => session.imported)
+  const owned = options.sessions.filter(session => !session.imported)
+  const searchHref =
+    scope === undefined
+      ? undefined
+      : `/kb/${encodeURIComponent(scope.tenant)}/${encodeURIComponent(scope.knowledgeBase)}/search`
+
   return layout(
     options.shell,
     html`<section class="section">
       <div class="section-head">
         <h1 class="t-h1">Sessions</h1>
         <p class="t-small t-tertiary">
-          Server-owned history. CAIRN stores no query log, so this record lives with the console.
+          Two distinct records: this console's own query history, and imported CAIRN session
+          memory held as revisioned corpus.
         </p>
       </div>
 
-      ${options.sessions.length === 0
+      <section class="stack" aria-labelledby="imported-memory">
+        <div class="section-head">
+          <h2 class="t-h2" id="imported-memory">CAIRN session memory</h2>
+          <p class="t-small t-tertiary">
+            ${scope === undefined
+              ? 'No sessions knowledge base configured.'
+              : html`<span class="chip chip-mono"
+                  >${scope.tenant} / ${scope.knowledgeBase}</span
+                >`}
+          </p>
+        </div>
+
+        ${scope === undefined
+          ? emptyState({
+              title: 'No sessions knowledge base is configured.',
+              body: 'Import local agent sessions, ingest them as a CAIRN knowledge base, then point this console at that scope with CAIRN_WEB_SESSIONS_SCOPE=tenant/kb.',
+              command: 'python3 scripts/session_import.py export --out .cairn/session-chunks.jsonl',
+            })
+          : html`${notice(
+              'info',
+              'i',
+              html`Imported sessions are <strong>corpus, not history</strong>: immutable,
+              revisioned, and retrieved as untrusted evidence. Look up an exact
+              <code>session_uid</code> for a bounded continuation packet, or search the whole
+              knowledge base from the workbench.`,
+            )}
+            ${packetLookupForm({
+              sessionUid: options.sessionUid ?? '',
+              configured: true,
+            })}
+            <div class="row">
+              <a class="btn" href="${searchHref as string}">Search session memory</a>
+              <a
+                class="btn"
+                data-variant="ghost"
+                href="${`${searchHref as string}?q=${encodeURIComponent('doc_type session_meta')}&filters=${encodeURIComponent('{"doc_type":"session_meta"}')}`}"
+                >Browse session headers</a
+              >
+            </div>`}
+      </section>
+
+      <section class="stack" aria-labelledby="owned-history">
+        <div class="section-head">
+          <h2 class="t-h2" id="owned-history">Query history</h2>
+          <p class="t-small t-tertiary">
+            Server-owned. CAIRN stores no query log, so this record lives with the console.
+          </p>
+        </div>
+
+        ${owned.length === 0
+          ? emptyState({
+              title: 'No searches recorded yet.',
+              body: 'Run a search from the workbench. Failed searches are recorded too.',
+            })
+          : sessionSummaryList(owned, options.shell.now)}
+
+        ${imported.length === 0
+          ? ''
+          : html`<h3 class="t-h3">Imported history records</h3>
+              <p class="t-small t-tertiary measure">
+                Query records handed to this console through
+                <code>POST /api/history/import</code>. These are other runs' search logs, not
+                corpus.
+              </p>
+              ${sessionSummaryList(imported, options.shell.now)}`}
+
+        ${options.records.length === 0
+          ? ''
+          : html`<h3 class="t-h3">Searches</h3>
+              ${sessionTimeline(options.records, options.shell.now)}`}
+      </section>
+    </section>`,
+  )
+}
+
+/* ---------- /sessions/packet ---------- */
+
+export function sessionPacketPage(options: {
+  readonly shell: ShellOptions
+  readonly scope?: Scope | undefined
+  readonly sessionUid: string
+  readonly packet?: SessionPacket
+  readonly error?: {
+    readonly presentation: ErrorPresentation
+    readonly message: string
+    readonly requestId?: string
+    readonly retryHref?: string
+  }
+}): SafeHtml {
+  const scope = options.scope
+  return layout(
+    options.shell,
+    html`<section class="section">
+      <div class="section-head">
+        <h1 class="t-h1">Continuation packet</h1>
+        <p class="t-small t-tertiary">
+          ${scope === undefined
+            ? 'No sessions knowledge base configured.'
+            : `${scope.tenant} / ${scope.knowledgeBase}`}
+        </p>
+      </div>
+
+      ${scope === undefined
         ? emptyState({
-            title: 'No retrieval sessions recorded yet.',
-            body: 'Run a search from the workbench, or import an agent session through POST /api/history/import.',
+            title: 'No sessions knowledge base is configured.',
+            body: 'Set CAIRN_WEB_SESSIONS_SCOPE=tenant/kb to a scope that is also listed in CAIRN_WEB_SCOPES, then reload.',
           })
-        : html`<h2 class="t-h2">Sessions</h2>
-            ${sessionSummaryList(options.sessions, options.shell.now)}
-            <h2 class="t-h2">Searches</h2>
-            ${sessionTimeline(options.records, options.shell.now)}`}
+        : html`${packetLookupForm({ sessionUid: options.sessionUid, configured: true })}
+            ${options.error !== undefined
+              ? errorState(options.error.presentation, {
+                  message: options.error.message,
+                  ...(options.error.requestId === undefined
+                    ? {}
+                    : { requestId: options.error.requestId }),
+                  ...(options.error.retryHref === undefined
+                    ? {}
+                    : { retryHref: options.error.retryHref }),
+                })
+              : options.packet === undefined
+                ? emptyState({
+                    title: 'No session loaded.',
+                    body: 'Enter an exact session_uid above. Nothing is sent to the CAIRN server until you do, so opening this page spends no embedding credits.',
+                  })
+                : sessionPacketSection(options.packet)}`}
     </section>`,
   )
 }

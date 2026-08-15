@@ -6,6 +6,7 @@
 import { CairnClient } from './cairn-client.ts'
 import { loadConfig } from './config.ts'
 import { HistoryStore } from './history.ts'
+import { FileHistoryPersistence } from './history-store.ts'
 import { createApp } from './server.ts'
 
 async function main(): Promise<void> {
@@ -21,11 +22,12 @@ async function main(): Promise<void> {
     maxMetadataBytesPerHit: config.maxMetadataBytesPerHit,
   })
 
-  const app = createApp({
-    config,
-    client,
-    history: new HistoryStore(config.historyLimit),
-  })
+  // Unset CAIRN_WEB_HISTORY_PATH keeps history purely in memory.
+  const persistence =
+    config.historyPath === undefined ? undefined : new FileHistoryPersistence(config.historyPath)
+  const history = new HistoryStore(config.historyLimit, persistence)
+
+  const app = createApp({ config, client, history })
 
   const server = await app.listen(config.port, config.host)
   const address = server.address()
@@ -40,6 +42,12 @@ async function main(): Promise<void> {
       `  upstream : ${config.cairnBaseUrl}`,
       `  token    : ${config.token.length > 0 ? 'configured (server-side, never sent to the browser)' : 'not configured'}`,
       `  scopes   : ${config.scopes.length === 0 ? 'none (set CAIRN_WEB_SCOPES=tenant/kb)' : config.scopes.map(scope => `${scope.tenant}/${scope.knowledgeBase}${scope.fenced ? ' (fenced)' : ''}`).join(', ')}`,
+      `  sessions : ${config.sessionsScope === undefined ? 'no session memory KB (set CAIRN_WEB_SESSIONS_SCOPE=tenant/kb)' : `${config.sessionsScope.tenant}/${config.sessionsScope.knowledgeBase}`}`,
+      `  history  : ${
+        persistence === undefined
+          ? `in memory only (max ${config.historyLimit}; set CAIRN_WEB_HISTORY_PATH to persist)`
+          : `${persistence.path} (max ${config.historyLimit}; recovered ${persistence.lastReport.recovered}${persistence.lastReport.skipped > 0 ? `, skipped ${persistence.lastReport.skipped} unreadable line(s)` : ''}${persistence.lastReport.repairFailed ? ', repair unavailable' : ''})`
+      }`,
       '',
     ].join('\n'),
   )

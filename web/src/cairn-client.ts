@@ -196,6 +196,44 @@ export class CairnClient {
     return head
   }
 
+  /**
+   * Fetch the chunks of one imported session by exact `session_uid`.
+   *
+   * This is a normal search with a `session_uid` filter, not a new endpoint:
+   * CAIRN has no by-metadata fetch route. The filter is applied upstream after
+   * a bounded candidate pool, so the caller must still verify the scope of
+   * every returned chunk — `buildSessionPacket` does exactly that.
+   *
+   * The query is the uid itself, which is what the harness tool sends; it is
+   * the only text guaranteed to appear in every chunk of the session.
+   */
+  async sessionChunks(
+    input: {
+      readonly tenant: string
+      readonly knowledgeBase: string
+      readonly sessionUid: string
+      readonly limit: number
+      readonly candidateLimit: number
+      readonly requestId?: string
+      readonly callId?: string
+    },
+    signal?: AbortSignal,
+  ): Promise<CairnSearchResponse> {
+    return this.search(
+      {
+        tenant: input.tenant,
+        knowledgeBase: input.knowledgeBase,
+        query: input.sessionUid,
+        limit: input.limit,
+        candidateLimit: Math.max(input.candidateLimit, input.limit),
+        filters: { session_uid: input.sessionUid },
+        ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+        ...(input.callId === undefined ? {} : { callId: input.callId }),
+      },
+      signal,
+    )
+  }
+
   async search(input: SearchInput, signal?: AbortSignal): Promise<CairnSearchResponse> {
     assertScope(input.tenant, input.knowledgeBase)
     const value = await this.#request(

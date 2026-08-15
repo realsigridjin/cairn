@@ -22,6 +22,13 @@ export interface WebConfig {
   readonly token: string
   readonly scopes: readonly Scope[]
   readonly defaultScope: Scope | undefined
+  /**
+   * The knowledge base holding imported CAIRN session memory, if one is
+   * configured. Session packets are only served from this scope: it is a
+   * different kind of corpus (agent transcripts, not project knowledge) and
+   * conflating the two would let a session-packet lookup read arbitrary KBs.
+   */
+  readonly sessionsScope: Scope | undefined
   readonly timeoutMs: number
   readonly retries: number
   readonly maxRetryDelayMs: number
@@ -29,6 +36,11 @@ export interface WebConfig {
   readonly maxMetadataBytesPerHit: number
   readonly maxTextCharsPerHit: number
   readonly historyLimit: number
+  /**
+   * Optional JSONL file backing server-owned query history. Unset means the
+   * store is purely in memory, which keeps local dev free of stray files.
+   */
+  readonly historyPath: string | undefined
   readonly allowHistoricalRevisions: boolean
 }
 
@@ -44,6 +56,40 @@ export const DEFAULTS = {
   maxTextCharsPerHit: 4_000,
   historyLimit: 500,
 } as const
+
+/**
+ * `CAIRN_WEB_SESSIONS_SCOPE=local/sessions`
+ *
+ * Must also appear in `CAIRN_WEB_SCOPES` (and not be fenced) so the sessions
+ * KB is reachable through the same scope allowlist as everything else. An
+ * unreachable sessions scope is a boot error, not a runtime 404.
+ */
+export function resolveSessionsScope(
+  raw: string | undefined,
+  scopes: readonly Scope[],
+): Scope | undefined {
+  const trimmed = raw?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  const parsed = parseScopes(trimmed)
+  const wanted = parsed[0]
+  if (parsed.length !== 1 || wanted === undefined) {
+    throw new Error('CAIRN_WEB_SESSIONS_SCOPE must name exactly one tenant/kb')
+  }
+  const known = scopes.find(
+    scope => scope.tenant === wanted.tenant && scope.knowledgeBase === wanted.knowledgeBase,
+  )
+  if (known === undefined) {
+    throw new Error(
+      `CAIRN_WEB_SESSIONS_SCOPE ${wanted.tenant}/${wanted.knowledgeBase} must also appear in CAIRN_WEB_SCOPES`,
+    )
+  }
+  if (known.fenced) {
+    throw new Error(
+      `CAIRN_WEB_SESSIONS_SCOPE ${wanted.tenant}/${wanted.knowledgeBase} is fenced and cannot serve session packets`,
+    )
+  }
+  return known
+}
 
 /** Search request bounds enforced by `SearchRequest::validate` in `src/model.rs`. */
 export const SEARCH_BOUNDS = {
@@ -64,6 +110,11 @@ function integerEnv(env: NodeJS.ProcessEnv, key: string, fallback: number): numb
     throw new Error(`${key} must be a non-negative integer`)
   }
   return parsed
+}
+
+function optionalPath(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
 }
 
 function booleanEnv(env: NodeJS.ProcessEnv, key: string): boolean {
@@ -122,6 +173,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
     token: env.CAIRN_SERVER_TOKEN?.trim() ?? '',
     scopes,
     defaultScope,
+    sessionsScope: resolveSessionsScope(env.CAIRN_WEB_SESSIONS_SCOPE, scopes),
     timeoutMs: integerEnv(env, 'CAIRN_WEB_TIMEOUT_MS', DEFAULTS.timeoutMs) || DEFAULTS.timeoutMs,
     retries: integerEnv(env, 'CAIRN_WEB_RETRIES', DEFAULTS.retries),
     maxRetryDelayMs: DEFAULTS.maxRetryDelayMs,
@@ -133,6 +185,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
       DEFAULTS.maxTextCharsPerHit,
     ),
     historyLimit: integerEnv(env, 'CAIRN_WEB_HISTORY_LIMIT', DEFAULTS.historyLimit),
+    historyPath: optionalPath(env.CAIRN_WEB_HISTORY_PATH),
     allowHistoricalRevisions: booleanEnv(env, 'CAIRN_ALLOW_HISTORICAL_REVISIONS'),
   }
 }

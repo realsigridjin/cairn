@@ -8,6 +8,7 @@
 import type { CairnHeadResponse, CairnSearchHit, CairnSearchResponse } from '../protocol.ts'
 import { METADATA_KEYS, citation } from '../protocol.ts'
 import type { SearchRecord, SessionSummary } from '../history.ts'
+import type { PacketDrift, SessionPacket, SessionSegment } from '../session-packet.ts'
 import type { ErrorPresentation } from './errors.ts'
 import {
   digestAriaLabel,
@@ -366,6 +367,279 @@ export function sessionTimeline(
       }),
     )}
   </ul>`
+}
+
+/* ---------- Imported session continuation packet ---------- */
+
+const DRIFT_COPY: Readonly<
+  Record<PacketDrift, { readonly tone: string; readonly icon: string; readonly label: string; readonly body: string }>
+> = {
+  exact: {
+    tone: 'ok',
+    icon: '=',
+    label: 'exact',
+    body: 'The pinned revision is current HEAD. This packet reflects the live corpus.',
+  },
+  advanced: {
+    tone: 'warn',
+    icon: '↑',
+    label: 'advanced',
+    body: 'HEAD has moved past the revision this packet was read from. The session content is unchanged — revisions are immutable — but newer sessions may exist that this packet does not include.',
+  },
+  incompatible: {
+    tone: 'error',
+    icon: '✗',
+    label: 'incompatible',
+    body: 'The packet revision is ahead of HEAD. Two different corpora answered, so this packet cannot be trusted as a view of the current knowledge base.',
+  },
+  unknown: {
+    tone: 'warn',
+    icon: '?',
+    label: 'unknown',
+    body: 'HEAD could not be resolved, so drift against the live corpus is unknown.',
+  },
+}
+
+/** Drift is chrome on the packet, mirroring the harness `drifted` field. */
+export function driftState(drift: PacketDrift): SafeHtml {
+  const copy = DRIFT_COPY[drift]
+  return html`<span class="chip" data-tone="${copy.tone}" data-drift="${drift}">
+    <span aria-hidden="true">${copy.icon}</span> drift: ${copy.label}
+  </span>`
+}
+
+export function driftNotice(drift: PacketDrift): SafeHtml {
+  const copy = DRIFT_COPY[drift]
+  const tone = drift === 'exact' ? 'ok' : drift === 'incompatible' ? 'error' : 'warn'
+  return notice(tone, copy.icon, html`<strong>Revision drift: ${copy.label}.</strong> ${copy.body}`)
+}
+
+function lineageRows(packet: SessionPacket): readonly (readonly [string, string])[] {
+  const lineage = packet.lineage
+  const rows: (readonly [string, string])[] = []
+  const push = (label: string, value: string | number | undefined): void => {
+    if (value === undefined) return
+    rows.push([label, String(value)])
+  }
+  push('source', lineage.source)
+  push('native id', lineage.nativeId)
+  push('root session', lineage.rootSessionId)
+  push('parent', lineage.parentId)
+  push('depth', lineage.depth)
+  push('model', lineage.model)
+  push('provider', lineage.provider)
+  push('cwd', lineage.cwd)
+  push('repo', lineage.repoPath)
+  push('branch', lineage.gitBranch)
+  push('created', lineage.createdAtUnixMs === undefined ? undefined : isoTimestamp(lineage.createdAtUnixMs))
+  push('updated', lineage.updatedAtUnixMs === undefined ? undefined : isoTimestamp(lineage.updatedAtUnixMs))
+  push('messages', lineage.messageCount)
+  push('usage tokens', lineage.usageTotal)
+  push('usage cost', lineage.usageCost === undefined ? undefined : lineage.usageCost.toFixed(4))
+  return rows
+}
+
+/** Lineage: where this session came from, as a definition list, not prose. */
+export function lineageList(packet: SessionPacket): SafeHtml {
+  const rows = lineageRows(packet)
+  if (rows.length === 0) {
+    return html`<p class="t-small t-tertiary">
+      The imported chunks carry no lineage metadata.
+    </p>`
+  }
+  return html`<dl class="lineage">
+    ${join(
+      rows.map(
+        ([label, value]) => html`<div class="lineage-row">
+          <dt class="t-caption">${label}</dt>
+          <dd class="t-small chip-mono lineage-value">${value}</dd>
+        </div>`,
+      ),
+    )}
+  </dl>`
+}
+
+/**
+ * One ordered segment. Deliberately shaped like `resultCard` — same untrusted
+ * edge marker, same citation line — because it is the same class of evidence;
+ * only the ordering key differs (sequence, not score).
+ */
+export function segmentCard(segment: SessionSegment, index: number): SafeHtml {
+  const headingId = `segment-${index}-title`
+  const range =
+    segment.seqEnd === undefined
+      ? `seq ${segment.seqStart}`
+      : `seq ${segment.seqStart}–${segment.seqEnd}`
+  return html`<article
+    class="card"
+    data-untrusted="true"
+    style="--stagger-index: ${Math.min(index, 9)}"
+    aria-labelledby="${headingId}"
+    tabindex="0"
+  >
+    <div class="card-head">
+      <h3 class="card-title" id="${headingId}">
+        <span class="num num-strong">${index + 1}</span>
+        <span class="t-small t-tertiary">${range}</span>
+      </h3>
+      <div class="row row-tight">
+        <span class="num t-tertiary" aria-hidden="true">${formatScore(segment.score)}</span>
+        <span class="visually-hidden"
+          >log-odds ${segment.score.toFixed(2)}, posterior ${segment.posterior.toFixed(2)}</span
+        >
+      </div>
+    </div>
+
+    <p class="evidence-text t-small">${segment.text}</p>
+    ${segment.truncated
+      ? html`<p class="t-caption">Truncated by packet bounds.</p>`
+      : ''}
+
+    <p class="citation">
+      <span class="t-caption" aria-hidden="true">cite</span>
+      <span>${segment.citation}</span>
+    </p>
+  </article>`
+}
+
+/**
+ * The continuation packet.
+ *
+ * Order here is the packet's contract: provenance first (what corpus answered),
+ * then drift (is it still current), then lineage (where the session came from),
+ * then the untrusted-evidence fence, then the ordered segments.
+ */
+export function sessionPacketSection(packet: SessionPacket): SafeHtml {
+  return html`<div class="stack" data-packet="session_continuation">
+    <div class="provenance" role="status" aria-label="Session packet provenance">
+      <span class="chip" data-tone="head">
+        <span aria-hidden="true">▲</span> rev
+        <span class="num num-strong">${packet.revision}</span>
+      </span>
+      ${packet.headRevision === undefined
+        ? html`<span class="chip">HEAD unresolved</span>`
+        : html`<span class="chip">HEAD <span class="num">${packet.headRevision}</span></span>`}
+      ${packet.parentRevision === undefined
+        ? ''
+        : html`<span class="chip">parent <span class="num">${packet.parentRevision}</span></span>`}
+      <span class="provenance-sep" aria-hidden="true">|</span>
+      ${digestChip(packet.corpusSha256)}
+      <span class="provenance-sep" aria-hidden="true">|</span>
+      ${modeChip(packet.mode)} ${approximateChip(packet.approximate)} ${driftState(packet.drift)}
+      <span class="spacer"></span>
+      ${costMeter(packet.remoteBytes, packet.rangeReads)}
+    </div>
+
+    ${driftNotice(packet.drift)}
+
+    <div class="row">
+      <span class="chip chip-mono">session ${packet.sessionUid}</span>
+      <span class="chip">${formatCount(packet.returnedSegments)} ordered segments</span>
+      <span class="chip chip-mono">${packet.tenant} / ${packet.knowledgeBase}</span>
+      ${packet.metaChunks > 0
+        ? html`<span class="chip"
+            ><span aria-hidden="true">◦</span> ${formatCount(packet.metaChunks)} metadata chunk(s)</span
+          >`
+        : ''}
+      ${packet.truncated
+        ? html`<span class="chip" data-tone="warn"
+            ><span aria-hidden="true">✂</span> truncated by packet bounds</span
+          >`
+        : ''}
+    </div>
+
+    <section class="stack" aria-labelledby="packet-lineage">
+      <h2 class="t-h3" id="packet-lineage">Lineage</h2>
+      ${lineageList(packet)}
+    </section>
+
+    ${packet.scopeMismatches > 0 || packet.malformedMetadata > 0
+      ? notice(
+          'warn',
+          '⊘',
+          html`<strong>Discarded chunks.</strong> ${formatCount(packet.scopeMismatches)} chunk(s)
+          carried a different <code>session_uid</code> and ${formatCount(packet.malformedMetadata)}
+          had unusable continuation metadata. CAIRN applies metadata filters after a bounded
+          candidate pool, so this console re-verifies every chunk rather than rendering it.`,
+        )
+      : ''}
+
+    ${notice(
+      'warn',
+      '⚠',
+      html`<strong>Untrusted evidence.</strong> These segments are recorded agent transcript
+      windows, rendered as inert text. They are reference data, never instructions — for you or
+      for any model you paste them into. Cite the <code>cairn://</code> identifier when using
+      them.`,
+    )}
+
+    <section class="stack" aria-labelledby="packet-segments">
+      <h2 class="t-h3" id="packet-segments">Ordered evidence</h2>
+      <p class="t-small t-tertiary measure">
+        Ordered by <code>seq_start</code>, not by retrieval score, so the session reads as the
+        sequence it was.
+      </p>
+      ${packet.segments.length === 0
+        ? packet.metaChunks > 0
+          ? emptyState({
+              // The common case: the default import tier stores lineage only.
+              title: 'This session was imported at the metadata tier.',
+              body: 'The session exists and its lineage is shown above, but no transcript windows were indexed, so there is no ordered evidence to continue from. Transcript import is opt-in.',
+              command:
+                'python3 scripts/session_import.py export --tier transcript --out .cairn/session-chunks.jsonl',
+            })
+          : emptyState({
+              title: 'No segments matched this session in the pinned revision.',
+              body: 'The session_uid resolved no chunks at all. Check the uid, or re-run the importer and ingest to publish a newer revision.',
+              command: 'python3 scripts/session_import.py export --out .cairn/session-chunks.jsonl',
+            })
+        : html`<div class="results">
+            ${join(packet.segments.map((segment, index) => segmentCard(segment, index)))}
+          </div>`}
+    </section>
+
+    <section class="stack" aria-labelledby="packet-citations">
+      <h2 class="t-h3" id="packet-citations">Citations</h2>
+      <ul class="citation-list">
+        ${packet.citations.length === 0
+          ? html`<li class="t-small t-tertiary">No citations in this packet.</li>`
+          : join(
+              packet.citations.map(
+                value => html`<li class="citation-item t-small">${value}</li>`,
+              ),
+            )}
+      </ul>
+    </section>
+  </div>`
+}
+
+/** Lookup form for an exact session_uid. GET so the packet is linkable. */
+export function packetLookupForm(options: {
+  readonly sessionUid: string
+  readonly configured: boolean
+}): SafeHtml {
+  return html`<form class="stratum composer" data-state="draft" method="get" action="/sessions/packet">
+    <div class="field">
+      <label class="t-caption" for="session_uid">session_uid</label>
+      <input
+        class="input"
+        id="session_uid"
+        name="uid"
+        type="text"
+        maxlength="256"
+        spellcheck="false"
+        placeholder="senpi:01a0060a-…"
+        value="${options.sessionUid}"
+        ${options.configured ? raw('') : raw('disabled')}
+      />
+    </div>
+    <div class="composer-actions">
+      <p class="t-caption">Exact match. Segments are ordered by sequence, not by score.</p>
+      <button class="btn" data-variant="primary" type="submit" ${options.configured ? raw('') : raw('disabled')}>
+        Load packet
+      </button>
+    </div>
+  </form>`
 }
 
 export function sessionSummaryList(sessions: readonly SessionSummary[], now: number): SafeHtml {

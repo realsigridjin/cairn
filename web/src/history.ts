@@ -5,16 +5,23 @@
  * retrieval history is the web app's own durable concern, keyed by
  * (tenant, knowledgeBase, revision, corpusSha256, queryId).
  *
- * This in-memory store is the 1.0 placeholder for that table. It is
- * deliberately shaped like the eventual SQLite schema (append + bounded
- * retention + cursor paging + import) so swapping the backing store is a
- * constructor change, not a rewrite. `importSessions` is the seam that
- * accepts sessions produced by another agent run.
+ * This store is the 1.0 placeholder for that table. It is deliberately shaped
+ * like the eventual SQLite schema (append + bounded retention + cursor paging
+ * + import) so swapping the backing store is a constructor change, not a
+ * rewrite. `importSessions` is the seam that accepts sessions produced by
+ * another agent run.
+ *
+ * Durability is optional and injected: with no `persistence` the store is pure
+ * in memory, which keeps local dev free of stray files. Given a
+ * `HistoryPersistence` (see `history-store.ts`) the same semantics survive a
+ * restart. The in-memory array remains the read path either way, so queries
+ * never touch the disk.
  *
  * Failed searches are first-class records: an agent that hit
  * EMBEDDING_UNAVAILABLE mid-session is exactly what a human needs to see.
  */
 
+import type { HistoryPersistence } from './history-store.ts'
 import type { JsonValue } from './protocol.ts'
 
 export interface SearchRecordRequest {
@@ -51,6 +58,8 @@ export interface SearchRecord {
   readonly knowledgeBase: string
   readonly requestId: string
   readonly toolCallId?: string
+  /** True when the record arrived through importSessions rather than a live search. */
+  readonly imported?: boolean
   readonly createdAtUnixMs: number
   readonly latencyMs: number
   readonly request: SearchRecordRequest
@@ -88,18 +97,34 @@ const DEFAULT_PAGE_SIZE = 25
 
 export class HistoryStore {
   readonly #records: SearchRecord[] = []
-  readonly #imported = new Set<string>()
   readonly #limit: number
+  readonly #persistence: HistoryPersistence | undefined
 
-  constructor(limit: number) {
+  constructor(limit: number, persistence?: HistoryPersistence) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('history limit must be >= 1')
     this.#limit = limit
+    this.#persistence = persistence
+    if (persistence !== undefined) {
+      // Recovery applies the same retention bound as a live append, so a file
+      // written by a server with a larger limit cannot blow past this one's.
+      const recovered = persistence.load()
+      const kept = recovered.slice(Math.max(0, recovered.length - limit))
+      this.#records.push(...kept)
+      if (kept.length < recovered.length) persistence.rewrite(this.#records)
+    }
   }
 
   append(record: SearchRecord): SearchRecord {
     this.#records.push(record)
     // Bounded retention: drop oldest first, mirroring a rolling table.
+    const evicted = this.#records.length > this.#limit
     while (this.#records.length > this.#limit) this.#records.shift()
+    if (this.#persistence !== undefined) {
+      // Eviction changes existing lines, so it needs a full atomic rewrite.
+      // The common case appends a single line instead.
+      if (evicted) this.#persistence.rewrite(this.#records)
+      else this.#persistence.append(record)
+    }
     return record
   }
 
@@ -118,12 +143,15 @@ export class HistoryStore {
         continue
       }
       known.add(record.queryId)
-      this.#imported.add(record.sessionId)
-      this.append(record)
+      this.#records.push({ ...record, imported: true })
+      while (this.#records.length > this.#limit) this.#records.shift()
       imported += 1
     }
     // Keep chronological order after an out-of-band import.
     this.#records.sort((left, right) => left.createdAtUnixMs - right.createdAtUnixMs)
+    // Import reorders and may evict, so the file is republished wholesale
+    // rather than appended to.
+    if (imported > 0) this.#persistence?.rewrite(this.#records)
     return { imported, skipped }
   }
 
@@ -195,7 +223,7 @@ export class HistoryStore {
         errorCount,
         revisions: [...revisions].sort((left, right) => right - left),
         corpusDigests: [...digests],
-        imported: this.#imported.has(sessionId),
+        imported: records.some(record => record.imported === true),
       }
     })
     return summaries.sort((left, right) => right.updatedAtUnixMs - left.updatedAtUnixMs)

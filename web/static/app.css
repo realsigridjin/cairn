@@ -252,6 +252,7 @@ body {
 .input,
 .textarea {
   width: 100%;
+  min-width: 0;
   min-height: var(--target-min);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-sunken);
@@ -831,6 +832,68 @@ body {
   border-left-color: var(--ok-500);
 }
 
+/* ---------- Composite: Session continuation packet ---------- */
+
+/*
+ * Lineage is reference data read in scan order, not a comparison table, so it
+ * is a definition list on a label/value grid rather than a <table>. The label
+ * column is sized by content and the value track is min-width:0 so a long cwd
+ * or repo path wraps instead of widening the page.
+ */
+.lineage {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface-stratum);
+  border: var(--radius-sm) solid var(--border-hairline);
+  border-left: var(--space-1) solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+.lineage-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+}
+
+.lineage-value {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Citations are copy targets: monospace, selectable, always fully visible. */
+.citation-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.citation-item {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+}
+
+/* Drift is state, so it is marked on the chip itself, never by hue alone. */
+.chip[data-drift="incompatible"] {
+  font-weight: var(--weight-bold);
+}
+
+@media (max-width: 639px) {
+  .lineage-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .lineage {
+    padding: var(--space-3);
+  }
+}
+
 /* ---------- Utility ---------- */
 
 .visually-hidden {
@@ -876,8 +939,48 @@ body {
   }
 }
 
-/* xs: composer pins to thumb reach; evidence collapses to a disclosure. */
+/*
+ * xs: composer pins to thumb reach; evidence collapses to a disclosure.
+ *
+ * The 390px overflow was NOT a layout-width bug: `.shell` already collapses to
+ * a single `minmax(0, 1fr)` column at <=899px. It was unbreakable inline
+ * content — chunk ids, `cairn://` citations, corpus digests and endpoint URLs
+ * are single unbroken tokens far wider than 390px, and `.chip`/`.num` pin
+ * `white-space: nowrap`. A nowrap token inside a grid track establishes a
+ * min-content floor the track cannot go below, so the track outgrows the
+ * viewport and the whole document scrolls sideways.
+ *
+ * The fix is therefore at the token level: let long values wrap at this size
+ * instead of forcing the column wider. `overflow-x: clip` is deliberately NOT
+ * used — clipping hides the symptom while leaving the content unreachable.
+ */
 @media (max-width: 639px) {
+  .budget-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Chips carry digests and scope names: wrap rather than widen the track. */
+  .chip {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Monospace values (endpoint URL, digest, request id) are the widest tokens. */
+  .chip-mono,
+  .num {
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * The timeline is a 3-column grid whose middle track holds a raw query
+   * string. At this width the columns cannot coexist, so it stacks.
+   */
+  .timeline-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
   .provenance {
     padding: var(--space-2) var(--space-3);
   }
