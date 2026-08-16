@@ -91,6 +91,20 @@ This is the headline architecture CAIRN 1.0 delivers, and it is worth being prec
 
 DeepSeek Harness's own session store (`~/.dsh/sessions/**/session.jsonl.zstd` plus the `session_projcache.json` and `workspace.json` indexes) is a first-class input — a fresh Harness session can search and continue its own history, not just other agents'. See [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) for the importer pipeline, privacy tiers, and checkpoint semantics, and [examples/deepseek-harness.sessions.patch.yml](examples/deepseek-harness.sessions.patch.yml) for the mount.
 
+## Web console
+
+CAIRN 1.0 ships a same-origin web console (`web/`): the browser never sees the bearer token, and every result carries revision, corpus-digest, and `cairn://` citation provenance.
+
+| Connection health | Hybrid search workbench |
+| --- | --- |
+| ![Connection health: service, version, auth, scope, revision, and embedding provenance checks](docs/screenshots/web-connect.png) | ![Hybrid search workbench with evidence bars, cost, and citations](docs/screenshots/web-search.png) |
+
+| Session memory and query history | Continuation packet |
+| --- | --- |
+| ![Imported session memory separated from server-owned query history](docs/screenshots/web-sessions.png) | ![Continuation packet with lineage, drift state, and untrusted-evidence boundary](docs/screenshots/web-session-packet.png) |
+
+The packet view is responsive down to a 390px mobile viewport; long session identifiers wrap instead of overflowing.
+
 ## Why CAIRN exists
 
 A conventional RAG stack often separates source documents, BM25, vectors, metadata, and revision state. Rollback and reproducibility then become harder than the retrieval math itself.
