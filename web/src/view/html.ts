@@ -1,7 +1,7 @@
 /**
  * Minimal server-side HTML rendering.
  *
- * Retrieved chunk text is UNTRUSTED DATA (see DEEPSEEK_HARNESS.md
+ * Retrieved chunk text is UNTRUSTED DATA (see README.md
  * "Prompt-injection boundary"). It is rendered as plain text only: no
  * markdown, no HTML, no link auto-detection. `escapeHtml` is the single
  * choke point and every interpolation of server data goes through `html`.
