@@ -8,6 +8,10 @@
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.8.3"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
