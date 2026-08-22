@@ -329,7 +329,29 @@ impl Catalog {
         }
     }
 
+    /// Publish a new revision, inferring shard inheritance from content-
+    /// addressed key overlap with the parent. Any reused parent shard key
+    /// pins the embedding provider/model/dimension to the parent's identity.
     pub async fn publish(&self, manifest: &RevisionManifest) -> Result<()> {
+        self.publish_inner(manifest, false).await
+    }
+
+    /// Publish an explicit full shard replacement (`cairn snapshot` or
+    /// `publish --replace-shards`). The caller asserts that every shard was
+    /// rebuilt for this revision, so embedding provider/model/dimension may
+    /// change even when a deterministically rebuilt shard is byte-identical to
+    /// a parent shard and therefore keeps its content-addressed key. Ordinary
+    /// or delta publication must use [`Catalog::publish`], which stays
+    /// conservative.
+    pub async fn publish_full_replacement(&self, manifest: &RevisionManifest) -> Result<()> {
+        self.publish_inner(manifest, true).await
+    }
+
+    async fn publish_inner(
+        &self,
+        manifest: &RevisionManifest,
+        full_shard_replacement: bool,
+    ) -> Result<()> {
         validate_manifest_shape(manifest)?;
         let head_key = Self::head_key(&manifest.tenant, &manifest.knowledge_base)?;
         let current = self
@@ -381,7 +403,8 @@ impl Catalog {
                     .shards
                     .iter()
                     .any(|s| parent_manifest.shards.iter().any(|p| p.key == s.key));
-                if inherited
+                if !full_shard_replacement
+                    && inherited
                     && (manifest.dimension != parent_manifest.dimension
                         || manifest.embedding_model != parent_manifest.embedding_model
                         || manifest.embedding_provider != parent_manifest.embedding_provider)

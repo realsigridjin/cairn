@@ -56,6 +56,12 @@ s:<source>:<native-id>:meta
 s:<source>:<native-id>:m:<start>-<end>
 ```
 
+The `:meta` chunk carries `doc_type: "session_meta"`. Transcript-tier
+`:m:<start>-<end>` chunks carry `doc_type: "session_messages"` plus inclusive
+integer `seq_start` and `seq_end` metadata. Grouped recall treats these as
+ordered transcript windows; unknown `doc_type` values remain diagnostics
+rather than evidence.
+
 A re-run over unchanged stores is byte-for-byte idempotent. Appended JSONL sessions resume from a checkpoint; changed compressed DeepSeek Harness sessions are decoded again because zstd frames are not safely seekable. Checkpoints are written only after the canonical corpus is written successfully.
 
 ## Import
@@ -146,6 +152,14 @@ The browser-facing routes are:
 
 The session packet view shows source, working directory, lineage, model, timestamps, usage, and ordered message windows when transcript-tier chunks were imported. A metadata-tier import still shows lineage and revision state, and says plainly that ordered transcript evidence is unavailable until transcript import is enabled. The handoff view compares the packet's pinned revision with current HEAD, carries the corpus digest as provenance, and reports exact, advanced, or incompatible state.
 
+The low-level continuation path pins current HEAD and directly reads immutable
+chunk ids through `POST /v1/{tenant}/kb/{kb}/chunks/by-id-prefix` using
+`id_prefix: "s:<session_uid>:"` and `order_by: "seq_start"`. It does not use
+retrieval scores or an approximate candidate pool. The server rechecks
+tenant/KB scope, applies tombstones and request budgets, returns revision and
+corpus provenance, and permits only a pin equal to current HEAD when
+historical revision access is disabled.
+
 ## Failure behavior
 
 - Malformed one-file records are reported without discarding unrelated stores.
@@ -153,7 +167,7 @@ The session packet view shows source, working directory, lineage, model, timesta
 - Duplicate imports converge to the same canonical chunk set.
 - Missing or stale checkpoints trigger re-import and convergence, not silent loss.
 - Secrets found in imported text are replaced before ingest.
-- Historical replay remains disabled unless the CAIRN server is explicitly started with historical revision access.
+- Historical replay remains disabled unless the CAIRN server is explicitly started with historical revision access; an explicit pin equal to current HEAD is not historical replay and remains available for race-safe packets.
 
 ## Verification surfaces
 

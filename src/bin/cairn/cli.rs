@@ -1391,7 +1391,14 @@ async fn publish_with_expectation(
         tombstones,
         uqa_bundle,
     };
-    catalog.publish(&manifest).await?;
+    if args.replace_shards {
+        // Explicit full replacement: this command rebuilt every shard, so a
+        // deterministically byte-identical shard may keep the parent's object
+        // key even while embedding provenance changes.
+        catalog.publish_full_replacement(&manifest).await?;
+    } else {
+        catalog.publish(&manifest).await?;
+    }
     match format {
         OutputFormat::Json => print_json(&manifest),
         OutputFormat::Human => {

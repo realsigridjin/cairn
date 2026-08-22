@@ -259,6 +259,20 @@ impl SearchRequest {
         self.candidate_limit.max(self.limit)
     }
 
+    /// Machine-consumed retrieval status for the *effective* request: lexical
+    /// when no query vector is present, hybrid when query text and a vector
+    /// are both present, vector when only a vector is present.
+    #[must_use]
+    pub fn retrieval_mode(&self) -> RetrievalMode {
+        if self.query_vector.is_empty() {
+            RetrievalMode::Lexical
+        } else if self.query.trim().is_empty() {
+            RetrievalMode::Vector
+        } else {
+            RetrievalMode::Hybrid
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.limit > 0 && self.limit <= 1_000,
@@ -315,6 +329,117 @@ fn default_max_range_reads() -> u64 {
     4096
 }
 
+/// Hit ordering for direct chunk lookup. Unknown values are rejected by
+/// typed serde during request decoding.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChunkLookupOrder {
+    /// Generic default: lexicographic chunk-id order.
+    #[default]
+    Id,
+    /// Chronological session ordering: `session_meta` lineage first, then
+    /// `session_window` and persisted `session_messages` chunks with a finite,
+    /// nonnegative integer `metadata.seq_start` ascending; malformed or other
+    /// chunks last with chunk id as the deterministic tie-break. Applied before
+    /// `limit` truncation so bounded requests keep the earliest valid windows.
+    SeqStart,
+}
+
+/// Direct chunk lookup by immutable chunk-id prefix. This is a point-read
+/// path, not retrieval: it never touches lexical/vector indexes or the warm
+/// UQA path and never mutates normal search behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChunkLookupRequest {
+    pub id_prefix: String,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub revision: Option<u64>,
+    #[serde(default)]
+    pub order_by: ChunkLookupOrder,
+    #[serde(default = "default_max_remote_bytes")]
+    pub max_remote_bytes: u64,
+    #[serde(default = "default_max_range_reads")]
+    pub max_range_reads: u64,
+}
+
+impl ChunkLookupRequest {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.id_prefix.is_empty()
+                && self.id_prefix.len() <= crate::index::builder::MAX_CHUNK_ID_BYTES,
+            "id_prefix must be in 1..={} bytes",
+            crate::index::builder::MAX_CHUNK_ID_BYTES
+        );
+        anyhow::ensure!(
+            !self.id_prefix.chars().any(char::is_control),
+            "id_prefix must not contain control characters"
+        );
+        anyhow::ensure!(
+            self.limit > 0 && self.limit <= 1_000,
+            "limit must be in 1..=1000"
+        );
+        anyhow::ensure!(
+            (1024 * 1024..=4 * 1024 * 1024 * 1024u64).contains(&self.max_remote_bytes),
+            "max_remote_bytes must be in 1MiB..=4GiB"
+        );
+        anyhow::ensure!(
+            (16..=100_000).contains(&self.max_range_reads),
+            "max_range_reads must be in 16..=100000"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkLookupHit {
+    pub id: String,
+    pub text: String,
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkLookupResponse {
+    pub revision: u64,
+    /// Immutable embedding provenance pinned by this revision.
+    pub embedding_provider: String,
+    pub embedding_model: String,
+    pub dimension: u32,
+    /// Canonical live-corpus digest from the pinned revision statistics object.
+    pub corpus_sha256: String,
+    pub hits: Vec<ChunkLookupHit>,
+    pub remote_bytes: u64,
+    pub range_reads: u64,
+}
+
+/// Deterministic tie-break-safe sort key for [`ChunkLookupOrder::SeqStart`]:
+/// session_meta lineage first, then session_window and session_messages by
+/// ascending valid `seq_start`, then malformed/other chunks. Chunk id breaks
+/// ties at the call site.
+pub(crate) fn session_order_key(hit: &ChunkLookupHit) -> (u8, u64) {
+    let doc_type = hit
+        .metadata
+        .get("doc_type")
+        .and_then(serde_json::Value::as_str);
+    match doc_type {
+        Some("session_meta") => (0, 0),
+        Some("session_window") | Some("session_messages") => {
+            // Strictly a JSON nonnegative integer: floats, negatives and
+            // strings are malformed and sink to the tail tier.
+            match hit
+                .metadata
+                .get("seq_start")
+                .and_then(serde_json::Value::as_u64)
+            {
+                Some(seq_start) => (1, seq_start),
+                None => (2, 0),
+            }
+        }
+        _ => (2, 0),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
     pub id: String,
@@ -339,6 +464,14 @@ pub struct SearchResponse {
     /// Canonical live-corpus digest from the revision statistics object.
     pub corpus_sha256: String,
     pub mode: SearchMode,
+    /// Which retrieval signals produced these hits, derived from the effective
+    /// request after query-embedding resolution. Distinct from `mode`, which
+    /// reports the warm/cold execution path.
+    pub retrieval_mode: RetrievalMode,
+    /// True when automatic query embedding was eligible but unavailable or
+    /// failed, so the recall degraded to lexical retrieval. Intentional
+    /// lexical-only requests (auto-embedding disabled) report false.
+    pub query_embedding_fallback: bool,
     pub score_domain: ScoreDomain,
     /// True when candidate generation is approximate or filtering is applied
     /// after a bounded candidate pool. This is intentionally explicit so API
@@ -354,6 +487,19 @@ pub struct SearchResponse {
 pub enum SearchMode {
     Cold,
     Warm,
+}
+
+/// Machine-consumed retrieval status of a search response. Unknown values are
+/// rejected by typed serde during response decoding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalMode {
+    /// The effective request carried no query vector.
+    Lexical,
+    /// Query text plus a query vector were both present.
+    Hybrid,
+    /// Only a query vector was present.
+    Vector,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

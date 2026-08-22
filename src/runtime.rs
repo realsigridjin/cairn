@@ -3,8 +3,12 @@ use crate::embedding::{EmbeddingInputType, TextEmbedder};
 use crate::heat::{HeatPolicy, HeatTracker};
 use crate::manifest::{
     read_revision_stats, read_tombstones, Catalog, RevisionManifest, RevisionStatsDescriptor,
+    ShardDescriptor,
 };
-use crate::model::{RevisionStats, ScoreDomain, SearchMode, SearchRequest, SearchResponse};
+use crate::model::{
+    session_order_key, ChunkLookupHit, ChunkLookupOrder, ChunkLookupRequest, ChunkLookupResponse,
+    RetrievalMode, RevisionStats, ScoreDomain, SearchMode, SearchRequest, SearchResponse,
+};
 use crate::object_store::ObjectStore;
 use crate::search::cold::{ColdShardReader, OpenedColdShard, RemoteBudget};
 use anyhow::{bail, Context, Result};
@@ -17,6 +21,7 @@ use tokio::sync::Mutex;
 
 const MAX_STATS_CACHE_ENTRIES: usize = 1024;
 const MAX_TOMBSTONE_CACHE_ENTRIES: usize = 1024;
+const MAX_OPENED_SHARD_CACHE_ENTRIES: usize = 1024;
 const MAX_QUERY_EMBEDDING_CACHE_ENTRIES: usize = 4096;
 const MAX_QUERY_EMBEDDING_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -63,6 +68,8 @@ pub struct CairnRuntime {
     tombstone_locks: DashMap<String, Arc<Mutex<()>>>,
     query_embedding_cache: DashMap<String, Arc<Vec<f32>>>,
     query_embedding_locks: DashMap<String, Arc<Mutex<()>>>,
+    opened_shard_cache: DashMap<String, Arc<OpenedColdShard>>,
+    opened_shard_locks: DashMap<String, Arc<Mutex<()>>>,
     activation_inflight: Arc<DashMap<String, ()>>,
     pub nprobe: usize,
     pub limits: RuntimeLimits,
@@ -90,6 +97,8 @@ impl CairnRuntime {
             tombstone_locks: DashMap::new(),
             query_embedding_cache: DashMap::new(),
             query_embedding_locks: DashMap::new(),
+            opened_shard_cache: DashMap::new(),
+            opened_shard_locks: DashMap::new(),
             activation_inflight: Arc::new(DashMap::new()),
             store,
             nprobe: 8,
@@ -135,66 +144,45 @@ impl CairnRuntime {
             self.load_stats(&manifest.stats, budget.clone()).await?;
 
         let mut effective_request = req.clone();
+        let mut query_embedding_fallback = false;
         if self.auto_embed
             && effective_request.query_vector.is_empty()
             && !effective_request.query.trim().is_empty()
         {
             match manifest.embedding_provider.as_str() {
-                "openrouter" => {
-                    let embedder = self.embedder.as_ref().context(
-                        "this revision uses OpenRouter embeddings, but no embedder is configured; set OPENROUTER_API_KEY, provide query_vector explicitly, or use lexical-only mode",
-                    )?;
-                    let cache_key = query_embedding_cache_key(
-                        &manifest.embedding_model,
-                        manifest.dimension,
-                        &effective_request.query,
-                    );
-                    if let Some(cached) = self.query_embedding_cache.get(&cache_key) {
-                        effective_request.query_vector = cached.value().as_ref().clone();
-                    } else {
-                        let lock = self
-                            .query_embedding_locks
-                            .entry(cache_key.clone())
-                            .or_insert_with(|| Arc::new(Mutex::new(())))
-                            .clone();
-                        let guard = lock.lock().await;
-                        let loaded: Result<Vec<f32>> = async {
-                            if let Some(cached) = self.query_embedding_cache.get(&cache_key) {
-                                return Ok(cached.value().as_ref().clone());
+                "openrouter" => match self.embedder.as_ref() {
+                    Some(embedder) => {
+                        match self
+                            .load_query_embedding(embedder, &manifest, &effective_request.query)
+                            .await
+                        {
+                            Ok(vector) => {
+                                effective_request.query_vector = vector;
                             }
-                            let input = [effective_request.query.as_str()];
-                            let mut embedded = embedder
-                                .embed(
-                                    &manifest.embedding_model,
-                                    manifest.dimension,
-                                    EmbeddingInputType::Query,
-                                    &input,
-                                )
-                                .await?;
-                            let vector = embedded
-                                .pop()
-                                .context("embedding provider returned no query vector")?;
-                            self.query_embedding_cache
-                                .insert(cache_key.clone(), Arc::new(vector.clone()));
-                            let vector_bytes = vector.len().saturating_mul(std::mem::size_of::<f32>()).max(1);
-                            let cache_entries = (MAX_QUERY_EMBEDDING_CACHE_BYTES / vector_bytes)
-                                .clamp(1, MAX_QUERY_EMBEDDING_CACHE_ENTRIES);
-                            trim_dashmap(
-                                &self.query_embedding_cache,
-                                cache_entries,
-                                Some(&cache_key),
-                            );
-                            Ok(vector)
+                            Err(error) => {
+                                tracing::warn!(
+                                    error = %error,
+                                    "automatic query embedding failed; falling back to lexical retrieval"
+                                );
+                                query_embedding_fallback = true;
+                            }
                         }
-                        .await;
-                        drop(guard);
-                        cleanup_mutex_entry(&self.query_embedding_locks, &cache_key, &lock);
-                        effective_request.query_vector = loaded?;
+                    }
+                    None => {
+                        tracing::warn!(
+                            model = %manifest.embedding_model,
+                            "no embedder is configured for this revision; falling back to lexical retrieval"
+                        );
+                        query_embedding_fallback = true;
                     }
                 },
-                "external" => bail!(
-                    "this revision uses external embeddings, so CAIRN cannot derive a compatible query vector automatically; provide query_vector explicitly or disable auto-embedding for an intentional lexical-only search"
-                ),
+                "external" => {
+                    tracing::warn!(
+                        model = %manifest.embedding_model,
+                        "revision uses external embeddings; falling back to lexical retrieval"
+                    );
+                    query_embedding_fallback = true;
+                }
                 other => bail!("unsupported revision embedding provider: {other}"),
             }
         }
@@ -206,6 +194,7 @@ impl CairnRuntime {
                 manifest.dimension
             )
         }
+        let retrieval_mode = req.retrieval_mode();
 
         let heat_key = format!("{}:{}:{}", tenant, kb, manifest.revision);
         if crate::uqa::warm_execution_enabled() && self.heat.should_promote(&heat_key) {
@@ -229,6 +218,8 @@ impl CairnRuntime {
                                     dimension: manifest.dimension,
                                     corpus_sha256: stats.corpus_sha256.clone(),
                                     mode: SearchMode::Warm,
+                                    retrieval_mode,
+                                    query_embedding_fallback,
                                     score_domain: ScoreDomain::RevisionCalibratedLogOdds,
                                     approximate: !req.query_vector.is_empty()
                                         || !req.filters.is_empty(),
@@ -253,7 +244,14 @@ impl CairnRuntime {
         }
 
         let mut response = self
-            .search_cold(&manifest, req, &stats, budget.clone())
+            .search_cold(
+                &manifest,
+                req,
+                &stats,
+                budget.clone(),
+                retrieval_mode,
+                query_embedding_fallback,
+            )
             .await?;
         response.remote_bytes = response.remote_bytes.saturating_add(stats_bytes);
         response.range_reads = response.range_reads.saturating_add(stats_reads);
@@ -281,6 +279,209 @@ impl CairnRuntime {
             }
         }
         Ok(response)
+    }
+
+    /// Direct chunk lookup by immutable id prefix. This is a point-read path:
+    /// it resolves the pinned revision manifest, honors tombstones and the
+    /// runtime/request remote budgets, scans only the compact `ids` blocks of
+    /// each shard, and reads payload blocks solely for matching documents.
+    /// Results are globally sorted by id and truncated to `limit`. It never
+    /// touches the lexical/vector indexes, the warm UQA path, or normal search.
+    pub async fn chunks_by_id_prefix(
+        &self,
+        tenant: &str,
+        kb: &str,
+        req: &ChunkLookupRequest,
+    ) -> Result<ChunkLookupResponse> {
+        req.validate()?;
+        let limits = self.limits.validate()?;
+        if req.max_remote_bytes > limits.max_remote_bytes_per_query {
+            bail!("request remote-byte budget exceeds runtime policy")
+        }
+        if req.max_range_reads > limits.max_range_reads_per_query {
+            bail!("request range-read budget exceeds runtime policy")
+        }
+
+        let manifest = self.catalog.resolve(tenant, kb, req.revision).await?;
+        let budget = Arc::new(RemoteBudget::new(req.max_remote_bytes, req.max_range_reads));
+        // Load revision-global statistics to pin the live-corpus digest into
+        // the response provenance. Charged to the same request budget.
+        let (stats, stats_bytes, stats_reads) =
+            self.load_stats(&manifest.stats, budget.clone()).await?;
+        let (tombstones, tombstone_bytes, tombstone_reads) =
+            self.load_tombstones(&manifest, budget.clone()).await?;
+
+        let budget_for_scan = budget.clone();
+        let mut scanned: Vec<(usize, Vec<ChunkLookupHit>, u64, u64)> =
+            stream::iter(manifest.shards.iter().cloned().enumerate())
+                .map(|(ordinal, shard)| {
+                    let budget = budget_for_scan.clone();
+                    let prefix = req.id_prefix.clone();
+                    let tombstones = tombstones.clone();
+                    async move {
+                        let (reader, opened) = self.open_shard(shard, budget).await?;
+                        let hits = reader
+                            .chunks_by_id_prefix_opened(&opened, &prefix, &tombstones)
+                            .await?;
+                        let after = reader.stats.snapshot();
+                        Ok::<_, anyhow::Error>((ordinal, hits, after.0, after.1))
+                    }
+                })
+                .buffer_unordered(16)
+                .try_collect()
+                .await?;
+        scanned.sort_by_key(|entry| entry.0);
+
+        let mut remote_bytes = tombstone_bytes.saturating_add(stats_bytes);
+        let mut range_reads = tombstone_reads.saturating_add(stats_reads);
+        // Merge in shard-ordinal order. Chunk IDs are immutable/versioned
+        // identities; if malformed input places the same live ID in more than
+        // one shard, the lowest-ordinal shard wins deterministically.
+        let mut by_id: std::collections::BTreeMap<String, ChunkLookupHit> =
+            std::collections::BTreeMap::new();
+        for (_, hits, bytes, reads) in scanned {
+            remote_bytes = remote_bytes.saturating_add(bytes);
+            range_reads = range_reads.saturating_add(reads);
+            for hit in hits {
+                by_id.entry(hit.id.clone()).or_insert(hit);
+            }
+        }
+        let mut hits: Vec<_> = by_id.into_values().collect();
+        if req.order_by == ChunkLookupOrder::SeqStart {
+            // Order matched payloads chronologically BEFORE the global limit
+            // so bounded requests keep the earliest valid session windows.
+            hits.sort_by(|left, right| {
+                session_order_key(left)
+                    .cmp(&session_order_key(right))
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+        }
+        hits.truncate(req.limit);
+        Ok(ChunkLookupResponse {
+            revision: manifest.revision,
+            embedding_provider: manifest.embedding_provider.clone(),
+            embedding_model: manifest.embedding_model.clone(),
+            dimension: manifest.dimension,
+            corpus_sha256: stats.corpus_sha256.clone(),
+            hits,
+            remote_bytes,
+            range_reads,
+        })
+    }
+
+    /// Embed the query text through the configured provider with a bounded
+    /// singleflight cache. Only validated, correctly-dimensioned vectors are
+    /// cached; provider errors and empty/wrong-dimension results propagate so
+    /// the caller can degrade to lexical retrieval.
+    async fn load_query_embedding(
+        &self,
+        embedder: &Arc<dyn TextEmbedder>,
+        manifest: &RevisionManifest,
+        query: &str,
+    ) -> Result<Vec<f32>> {
+        let cache_key =
+            query_embedding_cache_key(&manifest.embedding_model, manifest.dimension, query);
+        if let Some(cached) = self.query_embedding_cache.get(&cache_key) {
+            return Ok(cached.value().as_ref().clone());
+        }
+        let lock = self
+            .query_embedding_locks
+            .entry(cache_key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let guard = lock.lock().await;
+        let loaded: Result<Vec<f32>> = async {
+            if let Some(cached) = self.query_embedding_cache.get(&cache_key) {
+                return Ok(cached.value().as_ref().clone());
+            }
+            let input = [query];
+            let mut embedded = embedder
+                .embed(
+                    &manifest.embedding_model,
+                    manifest.dimension,
+                    EmbeddingInputType::Query,
+                    &input,
+                )
+                .await?;
+            let vector = embedded
+                .pop()
+                .context("embedding provider returned no query vector")?;
+            anyhow::ensure!(
+                vector.len() == manifest.dimension as usize,
+                "embedding provider returned dimension {}, expected {}",
+                vector.len(),
+                manifest.dimension
+            );
+            self.query_embedding_cache
+                .insert(cache_key.clone(), Arc::new(vector.clone()));
+            let vector_bytes = vector
+                .len()
+                .saturating_mul(std::mem::size_of::<f32>())
+                .max(1);
+            let cache_entries = (MAX_QUERY_EMBEDDING_CACHE_BYTES / vector_bytes)
+                .clamp(1, MAX_QUERY_EMBEDDING_CACHE_ENTRIES);
+            trim_dashmap(&self.query_embedding_cache, cache_entries, Some(&cache_key));
+            Ok(vector)
+        }
+        .await;
+        drop(guard);
+        cleanup_mutex_entry(&self.query_embedding_locks, &cache_key, &lock);
+        loaded
+    }
+
+    /// Open a cold shard through the bounded immutable opened-shard cache,
+    /// keyed by the content-addressed shard identity. Cache hits consume zero
+    /// request budget for header/directory/meta reads; misses singleflight
+    /// per key so concurrent first opens read exactly once. Open errors are
+    /// never cached.
+    async fn open_shard(
+        &self,
+        shard: ShardDescriptor,
+        budget: Arc<RemoteBudget>,
+    ) -> Result<(ColdShardReader, Arc<OpenedColdShard>)> {
+        let reader = ColdShardReader::new_with_budget(self.store.clone(), shard.clone(), budget);
+        let key = opened_shard_cache_key(&shard);
+        if let Some(cached) = self.opened_shard_cache.get(&key) {
+            let opened = cached.value().clone();
+            drop(cached);
+            return Ok((reader, opened));
+        }
+        let lock = self
+            .opened_shard_locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let guard = lock.lock().await;
+        if let Some(cached) = self.opened_shard_cache.get(&key) {
+            let opened = cached.value().clone();
+            drop(cached);
+            drop(guard);
+            cleanup_mutex_entry(&self.opened_shard_locks, &key, &lock);
+            return Ok((reader, opened));
+        }
+        let loaded = reader.open().await;
+        let opened = match loaded {
+            Ok(opened) => {
+                // Insert while still holding the singleflight guard so queued
+                // waiters observe the opened shard instead of opening again.
+                let opened = Arc::new(opened);
+                self.opened_shard_cache.insert(key.clone(), opened.clone());
+                trim_dashmap(
+                    &self.opened_shard_cache,
+                    MAX_OPENED_SHARD_CACHE_ENTRIES,
+                    Some(&key),
+                );
+                opened
+            }
+            Err(error) => {
+                drop(guard);
+                cleanup_mutex_entry(&self.opened_shard_locks, &key, &lock);
+                return Err(error);
+            }
+        };
+        drop(guard);
+        cleanup_mutex_entry(&self.opened_shard_locks, &key, &lock);
+        Ok((reader, opened))
     }
 
     async fn load_stats(
@@ -381,28 +582,26 @@ impl CairnRuntime {
         req: &SearchRequest,
         stats: &RevisionStats,
         budget: Arc<RemoteBudget>,
+        retrieval_mode: RetrievalMode,
+        query_embedding_fallback: bool,
     ) -> Result<SearchResponse> {
         struct CandidateShard {
             ordinal: usize,
             upper_bound: f32,
             reader: ColdShardReader,
-            opened: OpenedColdShard,
+            opened: Arc<OpenedColdShard>,
         }
 
         let (tombstones, tombstone_bytes, tombstone_reads) =
             self.load_tombstones(manifest, budget.clone()).await?;
-        let store = self.store.clone();
         let manifest_dimension = manifest.dimension;
         let budget_for_open = budget.clone();
         let mut readers: Vec<(CandidateShard, u64, u64)> =
             stream::iter(manifest.shards.iter().cloned().enumerate())
                 .map(|(ordinal, shard)| {
-                    let store = store.clone();
                     let budget = budget_for_open.clone();
                     async move {
-                        let reader = ColdShardReader::new_with_budget(store, shard, budget);
-                        let before = reader.stats.snapshot();
-                        let opened = reader.open().await?;
+                        let (reader, opened) = self.open_shard(shard, budget).await?;
                         if opened.meta.dimension != manifest_dimension {
                             bail!("shard dimension does not match manifest")
                         }
@@ -422,8 +621,8 @@ impl CairnRuntime {
                                 reader,
                                 opened,
                             },
-                            after.0.saturating_sub(before.0),
-                            after.1.saturating_sub(before.1),
+                            after.0,
+                            after.1,
                         ))
                     }
                 })
@@ -487,6 +686,8 @@ impl CairnRuntime {
             dimension: manifest.dimension,
             corpus_sha256: stats.corpus_sha256.clone(),
             mode: SearchMode::Cold,
+            retrieval_mode,
+            query_embedding_fallback,
             score_domain: ScoreDomain::RevisionCalibratedLogOdds,
             approximate: !req.query_vector.is_empty() || !req.filters.is_empty(),
             hits,
@@ -504,6 +705,14 @@ fn query_embedding_cache_key(model: &str, dimension: u32, query: &str) -> String
     digest.update([0]);
     digest.update(query.as_bytes());
     format!("{:x}", digest.finalize())
+}
+
+/// Content-addressed identity of an immutable shard object. The declared
+/// format version and directory digest are included so a manifest that pairs
+/// known content with different structural claims cannot bypass open-time
+/// validation through a cache hit.
+fn opened_shard_cache_key(d: &ShardDescriptor) -> String {
+    format!("{}:{}:{}", d.format_version, d.directory_sha256, d.sha256)
 }
 
 fn tombstone_cache_key(m: &RevisionManifest) -> String {

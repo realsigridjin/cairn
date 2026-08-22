@@ -6,7 +6,7 @@ use crate::index::lexical::{bm25, query_terms, PostingList};
 use crate::index::vector::{approx_dot, normalize, top_centroids, IvfList, Router};
 use crate::index::{IdRecord, PayloadRecord, ShardMeta};
 use crate::manifest::ShardDescriptor;
-use crate::model::{RevisionStats, SearchHit, SearchRequest};
+use crate::model::{ChunkLookupHit, RevisionStats, SearchHit, SearchRequest};
 use crate::object_store::ObjectStore;
 use crate::search::fusion::merge_evidence;
 use anyhow::{bail, Context, Result};
@@ -335,6 +335,69 @@ impl ColdShardReader {
                 }
             }
         }
+        Ok(hits)
+    }
+
+    /// Scan the compact `ids` blocks of an already-opened shard for chunk ids
+    /// starting with `id_prefix`, then load only the payload blocks that hold
+    /// matching documents. Tombstoned ids are excluded before any payload read.
+    ///
+    /// The opened shard is passed in (rather than re-opened here) so callers
+    /// that hold a directory/open-shard cache can reuse the same
+    /// [`OpenedColdShard`] value across requests.
+    pub async fn chunks_by_id_prefix_opened(
+        &self,
+        opened: &OpenedColdShard,
+        id_prefix: &str,
+        excluded_ids: &HashSet<String>,
+    ) -> Result<Vec<ChunkLookupHit>> {
+        let dir = &opened.directory;
+        let meta = &opened.meta;
+        let id_block_count = meta.document_count.div_ceil(meta.id_block_size);
+        let mut jobs = Vec::new();
+        for block_id in 0..id_block_count {
+            let me = self.clone();
+            let dir = dir.clone();
+            jobs.push(async move {
+                me.block::<Vec<IdRecord>>(&dir, "ids", &block_id.to_string())
+                    .await
+            });
+        }
+        let blocks = stream::iter(jobs)
+            .buffer_unordered(MAX_CONCURRENT_RANGE_READS)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let mut matched: BTreeMap<u32, String> = BTreeMap::new();
+        for block in blocks {
+            for record in block {
+                validate_id_record(meta, &record)?;
+                if record.id.starts_with(id_prefix)
+                    && !excluded_ids.contains(&record.id)
+                    && matched.insert(record.doc_idx, record.id).is_some()
+                {
+                    bail!("duplicate id record doc_idx")
+                }
+            }
+        }
+        if matched.is_empty() {
+            return Ok(Vec::new());
+        }
+        let payloads = self.payloads(dir, meta, matched.keys().copied()).await?;
+        let mut hits = Vec::with_capacity(matched.len());
+        for (doc_idx, id) in matched {
+            let payload = payloads
+                .get(&doc_idx)
+                .with_context(|| format!("missing payload for doc {doc_idx}"))?;
+            if payload.id != id {
+                bail!("shard id/payload mismatch for doc {doc_idx}")
+            }
+            hits.push(ChunkLookupHit {
+                id,
+                text: payload.text.clone(),
+                metadata: payload.metadata.clone(),
+            });
+        }
+        hits.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(hits)
     }
 

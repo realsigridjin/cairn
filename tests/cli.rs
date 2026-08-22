@@ -207,6 +207,141 @@ fn snapshot_after_rollback_uses_a_fresh_revision_number() -> Result<()> {
 }
 
 #[test]
+fn snapshot_republishes_identical_shards_with_new_embedding_provenance() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    fs::write(
+        temp.path().join("chunks.jsonl"),
+        concat!(
+            "{\"id\":\"doc-v1-c0\",\"text\":\"hello object storage\",\"vector\":[1.0,0.0]}\n",
+            "{\"id\":\"doc-v1-c1\",\"text\":\"functional rust retrieval\",\"vector\":[0.0,1.0]}\n",
+        ),
+    )?;
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
+    let snapshot = |extra: &[&str]| {
+        let mut args = vec![
+            "snapshot",
+            "chunks.jsonl",
+            "--no-embed",
+            "--dev-calibration",
+            "--shards",
+            "1",
+        ];
+        args.extend_from_slice(extra);
+        cairn(&args, temp.path())
+    };
+
+    assert_success(snapshot(&["--embedding-model", "bge-m3-external"])?)?;
+    let head = assert_success(cairn(&["head"], temp.path())?)?;
+    assert_eq!(String::from_utf8(head.stdout)?.trim(), "1");
+
+    // Deterministic rebuild of the unchanged corpus produces the same
+    // content-addressed shard keys; the explicit full replacement must still
+    // be allowed to re-label provenance as openrouter.
+    assert_success(snapshot(&[
+        "--embedding-provider",
+        "openrouter",
+        "--embedding-model",
+        "qwen/qwen3-embedding-8b",
+    ])?)?;
+    let head = assert_success(cairn(&["head"], temp.path())?)?;
+    assert_eq!(String::from_utf8(head.stdout)?.trim(), "2");
+
+    let search = assert_success(cairn(
+        &[
+            "--format",
+            "json",
+            "search",
+            "object storage",
+            "--limit",
+            "1",
+            "--lexical-only",
+        ],
+        temp.path(),
+    )?)?;
+    let response: Value = serde_json::from_slice(&search.stdout)?;
+    assert_eq!(response.get("revision").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        response.get("embedding_provider").and_then(Value::as_str),
+        Some("openrouter")
+    );
+    assert_eq!(
+        response.get("embedding_model").and_then(Value::as_str),
+        Some("qwen/qwen3-embedding-8b")
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinary_publish_inheriting_parent_shards_rejects_provenance_change() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    fs::write(
+        temp.path().join("chunks.jsonl"),
+        concat!(
+            "{\"id\":\"doc-v1-c0\",\"text\":\"hello object storage\",\"vector\":[1.0,0.0]}\n",
+            "{\"id\":\"doc-v1-c1\",\"text\":\"functional rust retrieval\",\"vector\":[0.0,1.0]}\n",
+        ),
+    )?;
+    assert_success(cairn(
+        &["init", "--tenant", "acme", "--kb", "handbook"],
+        temp.path(),
+    )?)?;
+    assert_success(cairn(
+        &[
+            "snapshot",
+            "chunks.jsonl",
+            "--embedding-model",
+            "bge-m3-external",
+            "--dev-calibration",
+            "--shards",
+            "1",
+        ],
+        temp.path(),
+    )?)?;
+    assert_success(cairn(
+        &[
+            "build",
+            "chunks.jsonl",
+            "--out",
+            "built",
+            "--stats",
+            "stats.json",
+            "--dev-calibration",
+        ],
+        temp.path(),
+    )?)?;
+
+    // A delta publish inherits the parent's shard by default and must refuse
+    // to change embedding provenance without --replace-shards.
+    let output = cairn(
+        &[
+            "publish",
+            "--stats",
+            "stats.json",
+            "--embedding-provider",
+            "openrouter",
+        ],
+        temp.path(),
+    )?;
+    assert!(
+        !output.status.success(),
+        "delta publish with changed provider must fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains("--replace-shards"),
+        "error must point at full replacement: {stderr}"
+    );
+    let head = assert_success(cairn(&["head"], temp.path())?)?;
+    assert_eq!(String::from_utf8(head.stdout)?.trim(), "1");
+    Ok(())
+}
+
+#[test]
 fn config_command_is_secret_safe_and_machine_readable() -> Result<()> {
     let temp = tempfile::tempdir()?;
     assert_success(cairn(

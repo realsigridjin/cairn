@@ -1,6 +1,6 @@
 use crate::{
     manifest::{validate_scope_component, RevisionManifest},
-    model::{SearchRequest, SearchResponse},
+    model::{ChunkLookupRequest, ChunkLookupResponse, SearchRequest, SearchResponse},
     CairnRuntime,
 };
 use anyhow::{bail, Result};
@@ -168,26 +168,8 @@ impl KnowledgeBaseHeadResponse {
     }
 }
 
-pub async fn serve(runtime: CairnRuntime, options: ServerOptions) -> Result<()> {
-    options.validate()?;
-    let ServerOptions {
-        listen,
-        allow_historical_revisions,
-        max_request_bytes,
-        bearer_token,
-        allowed_scope,
-        allow_unauthenticated_non_loopback: _,
-    } = options;
-    let authentication_enabled = bearer_token.is_some();
-    let bearer_token_sha256 = bearer_token.as_deref().map(token_digest);
-    drop(bearer_token);
-    let state = AppState {
-        runtime: Arc::new(runtime),
-        allow_historical_revisions,
-        bearer_token_sha256,
-        allowed_scope: allowed_scope.map(Arc::new),
-    };
-    let router = Router::new()
+fn app_router(state: AppState, max_request_bytes: usize) -> Router {
+    Router::new()
         .route(
             "/health",
             get(|| async {
@@ -211,11 +193,37 @@ pub async fn serve(runtime: CairnRuntime, options: ServerOptions) -> Result<()> 
         )
         .route("/v1/{tenant}/kb/{kb}/head", get(head))
         .route("/v1/{tenant}/kb/{kb}/search", post(search))
+        .route(
+            "/v1/{tenant}/kb/{kb}/chunks/by-id-prefix",
+            post(chunks_by_id_prefix),
+        )
         .with_state(state)
         .layer(DefaultBodyLimit::max(max_request_bytes))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+}
+
+pub async fn serve(runtime: CairnRuntime, options: ServerOptions) -> Result<()> {
+    options.validate()?;
+    let ServerOptions {
+        listen,
+        allow_historical_revisions,
+        max_request_bytes,
+        bearer_token,
+        allowed_scope,
+        allow_unauthenticated_non_loopback: _,
+    } = options;
+    let authentication_enabled = bearer_token.is_some();
+    let bearer_token_sha256 = bearer_token.as_deref().map(token_digest);
+    drop(bearer_token);
+    let state = AppState {
+        runtime: Arc::new(runtime),
+        allow_historical_revisions,
+        bearer_token_sha256,
+        allowed_scope: allowed_scope.map(Arc::new),
+    };
+    let router = app_router(state, max_request_bytes);
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(
         listen = %listen,
@@ -317,6 +325,76 @@ async fn search(
     state
         .runtime
         .search(&tenant, &kb, &request)
+        .await
+        .map(Json)
+        .map_err(|error| classify_runtime_error(error, request_id))
+}
+
+async fn chunks_by_id_prefix(
+    State(state): State<AppState>,
+    Path((tenant, kb)): Path<(String, String)>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ChunkLookupRequest>, JsonRejection>,
+) -> std::result::Result<Json<ChunkLookupResponse>, ApiRejection> {
+    let request_id = request_id(&headers);
+    let tool_call_id = dsh_tool_call_id(&headers);
+    authorize(&state, &headers, request_id.clone())?;
+    tracing::debug!(
+        tenant = %tenant,
+        knowledge_base = %kb,
+        request_id = request_id.as_deref().unwrap_or("-"),
+        dsh_tool_call_id = tool_call_id.as_deref().unwrap_or("-"),
+        "CAIRN chunk id-prefix lookup request admitted",
+    );
+    let Json(request) = payload.map_err(|error| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JSON",
+            error.body_text(),
+            false,
+            request_id.clone(),
+        )
+    })?;
+    validate_scope_component("tenant", &tenant)
+        .and_then(|_| validate_scope_component("knowledge_base", &kb))
+        .and_then(|_| request.validate())
+        .map_err(|error| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_REQUEST",
+                error.to_string(),
+                false,
+                request_id.clone(),
+            )
+        })?;
+    authorize_scope(&state, &tenant, &kb, request_id.clone())?;
+    if let Some(revision) = request.revision {
+        if !state.allow_historical_revisions {
+            // An explicit pin of the current HEAD is not a historical lookup:
+            // the MCP bridge HEAD-pins every request, so that pin must stay
+            // legal while any non-HEAD revision remains forbidden.
+            let head_revision = state
+                .runtime
+                .catalog
+                .get_head(&tenant, &kb)
+                .await
+                .map_err(|error| classify_runtime_error(error, request_id.clone()))?
+                .map(|(head, _)| head.revision);
+            if head_revision != Some(revision) {
+                return Err(api_error(
+                    StatusCode::FORBIDDEN,
+                    "HISTORICAL_REVISION_DISABLED",
+                    "historical revision lookup is disabled".to_owned(),
+                    false,
+                    request_id,
+                ));
+            }
+        }
+    }
+
+    state
+        .runtime
+        .chunks_by_id_prefix(&tenant, &kb, &request)
         .await
         .map(Json)
         .map_err(|error| classify_runtime_error(error, request_id))
@@ -502,13 +580,242 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use super::ServerOptions;
     use super::{
-        parse_bearer_token, safe_correlation_header, secure_token_eq, token_digest, ServerOptions,
-        ServerScope,
+        app_router, parse_bearer_token, safe_correlation_header, secure_token_eq, token_digest,
+        AppState, ServerScope,
     };
     use anyhow::Result;
-    use axum::http::{HeaderMap, HeaderValue};
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
     use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    async fn lookup_fixture_state() -> Result<(AppState, tempfile::TempDir)> {
+        use crate::index::builder::{build_shards, revision_stats_from_chunks, BuildOptions};
+        use crate::manifest::{
+            upload_content_addressed, upload_revision_stats, Catalog, RevisionManifest,
+        };
+        use crate::model::{ChunkInput, GlobalScoringContext};
+        use crate::object_store::{LocalStore, ObjectStore};
+        use crate::CairnRuntime;
+        use bytes::Bytes;
+        use std::collections::BTreeMap;
+
+        let td = tempfile::tempdir()?;
+        let chunks = vec![
+            ChunkInput {
+                id: "srv-1".into(),
+                text: "route fixture one".into(),
+                vector: vec![1.0, 0.0],
+                metadata: BTreeMap::new(),
+            },
+            ChunkInput {
+                id: "srv-2".into(),
+                text: "route fixture two".into(),
+                vector: vec![0.0, 1.0],
+                metadata: BTreeMap::new(),
+            },
+        ];
+        let outputs = build_shards(
+            &chunks,
+            &td.path().join("built"),
+            1,
+            &BuildOptions {
+                ivf_lists: 2,
+                ..BuildOptions::default()
+            },
+        )?;
+        let store: Arc<dyn ObjectStore> = Arc::new(LocalStore::new(td.path().join("store")));
+        let mut shards = Vec::new();
+        for (path, _) in outputs {
+            let bytes = Bytes::from(tokio::fs::read(path).await?);
+            shards.push(
+                upload_content_addressed(store.clone(), "objects/shards", bytes, "cairn").await?,
+            );
+        }
+        let stats = revision_stats_from_chunks(
+            &chunks,
+            GlobalScoringContext::default(),
+            BuildOptions::default().analyzer,
+            "standard_cjk",
+        )?;
+        let stats = upload_revision_stats(store.clone(), "objects/stats", &stats).await?;
+        let manifest = RevisionManifest {
+            tenant: "t".into(),
+            knowledge_base: "kb".into(),
+            revision: 1,
+            parent_revision: None,
+            created_at_unix_ms: 1,
+            embedding_provider: "external".into(),
+            embedding_model: "test".into(),
+            dimension: 2,
+            shards,
+            stats,
+            tombstones: vec![],
+            uqa_bundle: None,
+        };
+        Catalog::new(store.clone()).publish(&manifest).await?;
+        let runtime = CairnRuntime::new(store, td.path().join("cache"));
+        let state = AppState {
+            runtime: Arc::new(runtime),
+            allow_historical_revisions: false,
+            bearer_token_sha256: None,
+            allowed_scope: None,
+        };
+        Ok((state, td))
+    }
+
+    async fn spawn_app(state: AppState) -> Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+        let router = app_router(state, 2 * 1024 * 1024);
+        let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
+        let addr = listener.local_addr()?;
+        let handle = tokio::spawn(async move {
+            if let Err(error) = axum::serve(listener, router).await {
+                tracing::warn!(%error, "test server exited");
+            }
+        });
+        Ok((addr, handle))
+    }
+
+    #[tokio::test]
+    async fn by_id_prefix_route_validates_requests_and_looks_up() -> Result<()> {
+        let (state, _fixture) = lookup_fixture_state().await?;
+        let (addr, server) = spawn_app(state).await?;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/v1/t/kb/kb/chunks/by-id-prefix");
+
+        let unknown_field = client
+            .post(&url)
+            .json(&serde_json::json!({"id_prefix": "srv-", "bogus": 1}))
+            .send()
+            .await?;
+        assert_eq!(unknown_field.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = unknown_field.json().await?;
+        assert_eq!(body["error"]["code"], "INVALID_JSON");
+
+        for invalid in [
+            serde_json::json!({"id_prefix": ""}),
+            serde_json::json!({"id_prefix": "srv-\n"}),
+            serde_json::json!({"id_prefix": "srv-", "limit": 0}),
+            serde_json::json!({"id_prefix": "srv-", "limit": 1001}),
+            serde_json::json!({"id_prefix": "srv-", "max_range_reads": 4}),
+            serde_json::json!({"id_prefix": "srv-", "max_remote_bytes": 10}),
+        ] {
+            let response = client.post(&url).json(&invalid).send().await?;
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "invalid body {invalid} must be rejected"
+            );
+            let body: serde_json::Value = response.json().await?;
+            assert_eq!(body["error"]["code"], "INVALID_REQUEST");
+        }
+
+        // Unknown order_by values must fail typed serde decoding, not request
+        // validation.
+        for invalid in [
+            serde_json::json!({"id_prefix": "srv-", "order_by": "chronological"}),
+            serde_json::json!({"id_prefix": "srv-", "order_by": 3}),
+        ] {
+            let response = client.post(&url).json(&invalid).send().await?;
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "unknown order_by {invalid} must be rejected"
+            );
+            let body: serde_json::Value = response.json().await?;
+            assert_eq!(body["error"]["code"], "INVALID_JSON");
+        }
+
+        // An explicit pin of the current HEAD revision is not a historical
+        // lookup: the MCP bridge always HEAD-pins, so this must succeed even
+        // with historical revisions disabled.
+        let head_pinned = client
+            .post(&url)
+            .json(&serde_json::json!({"id_prefix": "srv-", "revision": 1}))
+            .send()
+            .await?;
+        assert_eq!(head_pinned.status(), StatusCode::OK);
+        let body: serde_json::Value = head_pinned.json().await?;
+        assert_eq!(body["revision"], 1);
+
+        let historical = client
+            .post(&url)
+            .json(&serde_json::json!({"id_prefix": "srv-", "revision": 2}))
+            .send()
+            .await?;
+        assert_eq!(historical.status(), StatusCode::FORBIDDEN);
+        let body: serde_json::Value = historical.json().await?;
+        assert_eq!(body["error"]["code"], "HISTORICAL_REVISION_DISABLED");
+
+        let ok = client
+            .post(&url)
+            .json(&serde_json::json!({"id_prefix": "srv-"}))
+            .send()
+            .await?;
+        assert_eq!(ok.status(), StatusCode::OK);
+        let decoded: crate::model::ChunkLookupResponse = ok.json().await?;
+        assert_eq!(decoded.revision, 1);
+        assert_eq!(decoded.embedding_provider, "external");
+        assert!(
+            decoded.corpus_sha256.len() == 64
+                && decoded
+                    .corpus_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "response must pin the revision corpus digest"
+        );
+        let ids: Vec<&str> = decoded.hits.iter().map(|hit| hit.id.as_str()).collect();
+        assert_eq!(ids, vec!["srv-1", "srv-2"]);
+        assert!(decoded.remote_bytes > 0);
+        assert!(decoded.range_reads > 0);
+
+        server.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn by_id_prefix_route_applies_auth_and_scope_rules() -> Result<()> {
+        let (mut state, _fixture) = lookup_fixture_state().await?;
+        let token = "0123456789abcdef0123456789abcdef";
+        state.bearer_token_sha256 = Some(token_digest(token));
+        state.allowed_scope = Some(Arc::new(ServerScope {
+            tenant: "t".into(),
+            knowledge_base: "kb".into(),
+        }));
+        let (addr, server) = spawn_app(state).await?;
+        let client = reqwest::Client::new();
+        let scoped = format!("http://{addr}/v1/t/kb/kb/chunks/by-id-prefix");
+        let unscoped = format!("http://{addr}/v1/acme/kb/handbook/chunks/by-id-prefix");
+
+        let anonymous = client
+            .post(&scoped)
+            .json(&serde_json::json!({"id_prefix": "srv-"}))
+            .send()
+            .await?;
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+        let wrong_scope = client
+            .post(&unscoped)
+            .bearer_auth(token)
+            .json(&serde_json::json!({"id_prefix": "srv-"}))
+            .send()
+            .await?;
+        assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+        let body: serde_json::Value = wrong_scope.json().await?;
+        assert_eq!(body["error"]["code"], "SCOPE_FORBIDDEN");
+
+        let authorized = client
+            .post(&scoped)
+            .bearer_auth(token)
+            .json(&serde_json::json!({"id_prefix": "srv-"}))
+            .send()
+            .await?;
+        assert_eq!(authorized.status(), StatusCode::OK);
+
+        server.abort();
+        Ok(())
+    }
 
     #[test]
     fn non_loopback_requires_auth_by_default() {

@@ -49,7 +49,14 @@ The agent can now call `cairn_search`:
 { "query": "why is R2 the durable source of truth?", "limit": 6, "filters": { "lang": "en" } }
 ```
 
-Every result carries immutable provenance — revision, embedding provider/model/dimension, corpus SHA-256, cold/warm mode, calibrated score, and a `cairn://acme/handbook/revision/2/chunk/…` citation that stays valid even as the corpus evolves.
+Every result carries immutable provenance — revision, embedding provider/model/dimension, corpus SHA-256, cold/warm execution mode, lexical/hybrid/vector retrieval mode, calibrated score, and a `cairn://acme/handbook/revision/2/chunk/…` citation that stays valid even as the corpus evolves.
+
+`SearchResponse.mode` describes where execution ran (`cold` or `warm`).
+`SearchResponse.retrieval_mode` separately reports `lexical`, `hybrid`, or
+`vector`, and `query_embedding_fallback` says whether an eligible text query
+fell back to lexical retrieval because a compatible query embedder was
+unavailable or failed. An explicit `--lexical-only` server is intentional
+lexical retrieval and therefore does not set the fallback flag.
 
 ### Session memory: continue past agent work
 
@@ -72,7 +79,35 @@ That gives the agent two more tools:
 | `cairn_search_sessions` | "find the session where we debugged the elyn-server deploy" — filtered by harness, repo, branch, time |
 | `cairn_session_packet` | exact `session_uid` → a bounded, `seq_start`-ordered continuation packet with lineage (cwd, branch, model, usage) and a revision-drift verdict against current HEAD |
 
+The packet path is not approximate search. It first pins current HEAD, then
+uses `POST /v1/{tenant}/kb/{kb}/chunks/by-id-prefix` with
+`id_prefix: "s:<session_uid>:"` and `order_by: "seq_start"`. The endpoint
+scans compact chunk-id blocks, honors tombstones and remote-I/O budgets, loads
+payloads only for matching ids, and allows an explicit current-HEAD pin while
+still rejecting older revisions unless historical access is enabled.
+
 Retrieved sessions are fenced as **untrusted evidence** (`BEGIN_UNTRUSTED_CAIRN_EVIDENCE`): reference data, never instructions. The full contract is in [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md).
+
+### Revision-safe embedding provenance correction
+
+`cairn snapshot` and `cairn publish --replace-shards` are explicit full-shard
+replacement operations. They may update embedding provider/model provenance
+even when a deterministic rebuild produces byte-identical,
+content-addressed shard keys. Ordinary/delta `publish` remains conservative:
+if any parent shard key is inherited, changing provider, model, or dimension
+is rejected. Reference validation and the manifest/HEAD CAS publication
+sequence remain identical in both paths.
+
+When the JSONL already contains vectors produced by OpenRouter, correct the
+manifest provenance without another embedding API call:
+
+```bash
+cairn snapshot chunks-embedded.jsonl \
+  --no-embed \
+  --embedding-provider openrouter \
+  --embedding-model Qwen/Qwen3-Embedding-8B \
+  --shards 8
+```
 
 ## Web console
 
@@ -98,8 +133,8 @@ npm --prefix web start
 ## Why a native plugin (not a shell command)
 
 - **Trusted config vs. model arguments.** Base URL, token env, tenant/KB, fixed authorization filters, and all budgets live in operator-controlled profile config. The model only supplies `query`, bounded `limit`, and allowlisted `filters`; unknown arguments are rejected outright.
-- **Namespace fencing.** `cairn serve --restrict-to-default-scope` binds the sidecar to one tenant/KB as a second authorization fence; `/head` and `/search` require the bearer token when `CAIRN_SERVER_TOKEN` is set.
-- **Structured failures.** CAIRN returns machine-readable errors (`EMBEDDING_UNAVAILABLE`, `retryable`, `request_id`); the plugin honors `retryable=false` even on 5xx and retries only idempotent reads with call-scoped abort.
+- **Namespace fencing.** `cairn serve --restrict-to-default-scope` binds the sidecar to one tenant/KB as a second authorization fence; `/head`, `/search`, and `/chunks/by-id-prefix` require the bearer token when `CAIRN_SERVER_TOKEN` is set.
+- **Structured failures.** CAIRN returns machine-readable errors (`INVALID_REQUEST`, `SEARCH_FAILED`, `retryable`, `request_id`); the plugin honors `retryable=false` even on 5xx and retries only idempotent reads with call-scoped abort.
 - **Bounded evidence.** Response bytes, per-hit text, total text, and metadata keys are capped and validated with integer semantics — no unbounded context injection.
 
 ## Optional: UQA-RS warm execution
