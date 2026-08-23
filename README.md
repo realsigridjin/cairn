@@ -1,16 +1,19 @@
-# CAIRN
+# CAIRN — For Agents to Read
 
-**Revisioned retrieval for project knowledge and past coding-agent work.**
+> **For agents, not humans.** This README is an execution contract for
+> autonomous coding agents. Humans are not its intended reader or operator;
+> give this file to an agent that will configure, run, verify, and cite CAIRN.
 
-CAIRN turns a corpus or local coding-session history into a searchable,
-immutable knowledge base. Every result is pinned to a revision and carries a
-`cairn://` citation, so an agent can show exactly what evidence it used and
-which corpus state produced it.
+**Revisioned retrieval for agent work.**
 
-- **Project knowledge** — hybrid, lexical, or vector retrieval over JSONL
-  corpora.
-- **Session continuity** — searchable history from Senpi/pi, Codex, Claude
-  Code, and compatible local JSONL stores.
+CAIRN turns a corpus into a searchable, immutable knowledge base. Every result
+is pinned to a revision and carries a `cairn://` citation, so an agent can show
+exactly what evidence it used and which corpus state produced it.
+
+- **Use case: project knowledge** — hybrid, lexical, or vector retrieval over
+  JSONL corpora.
+- **Use case: past coding-agent work** — resume a prior run from searchable
+  session history when it is relevant to the current task.
 - **Reproducibility** — immutable shards, revision-pinned citations, corpus
   digests, embedding provenance, and calibrated retrieval metadata.
 - **Version** 1.0.0 · **API** v1 · **License** Apache-2.0
@@ -72,7 +75,7 @@ packet (about 1.25K–2.99K input tokens). These figures are context-size
 estimates rather than a specific provider's tokenizer telemetry; add your
 model's input-token price to price the final answer call.
 
-## Quick start
+## Agent quick start
 
 Build CAIRN and create a local, fully offline demonstration knowledge base:
 
@@ -105,11 +108,13 @@ Search responses report execution mode (`cold` or `warm`), retrieval mode
 (`lexical`, `hybrid`, or `vector`), calibrated score, embedding provenance,
 corpus digest, and revision-pinned `cairn://` citations.
 
-## Index past coding-agent work
+## Use case: resume past coding-agent work
 
-The importer is read-only against local session stores. It redacts secrets
-before writing normalized JSONL and defaults to the privacy-safe metadata tier.
-Use `--tier transcript` only when message windows are needed for recall.
+Use session continuity only when the current task benefits from prior work; it
+is one CAIRN use case, not CAIRN's identity. The importer is read-only against
+local session stores. It redacts secrets before writing normalized JSONL and
+defaults to the privacy-safe metadata tier. Use `--tier transcript` only when
+message windows are needed for recall.
 
 ```bash
 # Discover supported local session stores.
@@ -143,18 +148,11 @@ revision-safe continuation packet instead of reopening raw transcript files.
 See [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) for the schema, privacy
 boundary, packet contract, and revision-drift behavior.
 
-## Web console
+## Optional browser console
 
-The same-origin browser console in `web/` keeps the bearer token server-side
-and shows revision, corpus digest, and citations beside every result.
-
-| Connection health | Hybrid search workbench |
-| --- | --- |
-| ![Connection health](docs/screenshots/web-connect.png) | ![Hybrid search workbench](docs/screenshots/web-search.png) |
-
-| Session memory and query history | Continuation packet |
-| --- | --- |
-| ![Session memory](docs/screenshots/web-sessions.png) | ![Continuation packet](docs/screenshots/web-session-packet.png) |
+The same-origin browser console in `web/` is an optional operational surface.
+It keeps the bearer token server-side and exposes revision, corpus digest, and
+citations. This README deliberately does not document its human UI.
 
 ```bash
 CAIRN_BASE_URL=http://127.0.0.1:18080 \
@@ -172,7 +170,7 @@ repeated queries. This is opt-in: the standalone build has no UQA dependency.
 See [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) for the supported version
 boundary, feature flags, and exact build/test commands.
 
-## Verify a checkout
+## Agent verification
 
 ```bash
 make check                                                   # Rust fmt/tests/clippy + static validation
@@ -180,7 +178,7 @@ python3 -m unittest discover -s scripts/cairn_sessions/tests # importer suite
 npm --prefix web run check                                   # web typecheck + tests
 ```
 
-## Docs
+## Agent references
 
 | File | Contents |
 | --- | --- |
