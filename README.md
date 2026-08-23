@@ -1,117 +1,152 @@
 # CAIRN
 
-**Revisioned, object-store-native retrieval — with a native DeepSeek Harness plugin.** CAIRN gives DeepSeek Harness agents a knowledge base and a cross-agent session memory whose answers are pinned to immutable revisions, so "what the agent knew" can always be traced, replayed, and cited.
+**Revisioned retrieval for project knowledge and past coding-agent work.**
 
-- **Project knowledge** → `cairn_search` — hybrid retrieval with `cairn://` citations.
-- **Past agent sessions** → `cairn_search_sessions` + `cairn_session_packet` — search and continue work recorded by DeepSeek Harness, Senpi/pi, Codex, and Claude Code.
+CAIRN turns a corpus or local coding-session history into a searchable,
+immutable knowledge base. Every result is pinned to a revision and carries a
+`cairn://` citation, so an agent can show exactly what evidence it used and
+which corpus state produced it.
+
+- **Project knowledge** — hybrid, lexical, or vector retrieval over JSONL
+  corpora.
+- **Session continuity** — searchable history from Senpi/pi, Codex, Claude
+  Code, and compatible local JSONL stores.
+- **Reproducibility** — immutable shards, revision-pinned citations, corpus
+  digests, embedding provenance, and calibrated retrieval metadata.
 - **Version** 1.0.0 · **API** v1 · **License** Apache-2.0
 
----
+## Why CAIRN
 
-## Quick start: the DeepSeek Harness plugin
+CAIRN's value is retrieval quality under the conditions coding agents actually
+face: vague recall questions over large, noisy, and occasionally deleted
+session transcripts.
 
-The plugin is a native Cordis bundle (`integrations/deepseek-harness/`) with typed, strictly-bounded tool execution — not a shell wrapper. Install the prepacked, checksum-verified bundle into any DSH profile:
+An additive benchmark compared CAIRN revision 8 against a deterministic
+`grep`-only baseline on the same **1,489 raw-transcript-file** import and
+**12 positive recall cases**. At benchmark time grep could read the 1,483
+surviving local files (3.29 GB); six files deleted after import remained
+searchable in CAIRN but were deliberate grep misses. The default candidate is
+**H1**: one hybrid query, rather than lexical-only or five-query expansion.
+
+| Metric | grep-only G1 | CAIRN hybrid H1 |
+| --- | ---: | ---: |
+| nDCG@10 | 0.110 | **0.754** |
+| Recall@10 | 0.120 | **0.882** |
+| MRR@10 | 0.153 | **0.804** |
+| Relevant session reached within 10 candidates | 3 / 12 | **12 / 12** |
+| Paired nDCG@10 difference | — | **+0.644, exact p = 0.00049** |
+
+The comparison uses the same frozen qrels, metric code, seed, and bootstrap
+settings for both arms. It does **not** claim a universal answer-quality win:
+the separate one-shot downstream answer test did not show an answer-quality
+gain. The measured claim is narrower and useful: hybrid CAIRN finds relevant
+prior work much more reliably than searching raw transcripts with grep.
+
+### Token and API cost
+
+Retrieval itself makes no runtime LLM call. H1 embeds its query with
+Qwen3-Embedding-8B at a measured average of **24.1 embedding tokens** and
+**$0.000000241 per query**. For the revision-8 corpus, one-time vectorization
+of 25,885 chunks (226.5 MB text) is estimated at **$0.57–$1.36**, using
+1.67–4.0 characters per token for the mixed Korean/code corpus.
+
+LLM context is a separate cost: an agent still has to read the evidence that a
+tool returns. A reproducible rank-walk model sums text until it reaches the
+first relevant session, or gives up after ten candidates. It converts
+characters to a token range with 4.0 chars/token for English/code-heavy text
+and 1.67 chars/token for Korean-heavy text.
+
+| Retrieval path | Relevant within 10 | Mean evidence read per case | Estimated LLM input tokens |
+| --- | ---: | ---: | ---: |
+| grep G1, 50,000-character cap per candidate | 3 / 12 | 400,000 chars | 100.0K–239.5K |
+| **CAIRN H1** | **12 / 12** | **76,796 chars** | **19.2K–46.0K** |
+
+Under that deliberately bounded grep model, H1 saves **323,204 characters**
+per recall case — about **80.8K–193.5K LLM input tokens**, or **5.21× less
+context** — while finding four times as many cases. Without the per-candidate
+cap, common grep terms expand to 339.8M characters per case on this corpus;
+that is an upper-bound stress result, not a practical prompt size.
+
+The downstream answer prompt is separately bounded to a 5,000-character memory
+packet (about 1.25K–2.99K input tokens). These figures are context-size
+estimates rather than a specific provider's tokenizer telemetry; add your
+model's input-token price to price the final answer call.
+
+## Quick start
+
+Build CAIRN and create a local, fully offline demonstration knowledge base:
 
 ```bash
-# 1. Build and serve a knowledge base (one-time, local quickstart)
 cargo build --release --no-default-features --bin cairn
 export PATH="$PWD/target/release:$PATH"
-cairn init --tenant acme --kb handbook
-cairn ingest examples/chunks.jsonl --no-embed --embedding-provider external \
-  --embedding-model offline-demo --dev-calibration
 
+cairn init --tenant acme --kb handbook
+cairn snapshot examples/chunks.jsonl \
+  --no-embed \
+  --embedding-provider external \
+  --embedding-model offline-demo \
+  --dev-calibration
+
+cairn search "cold search" --tenant acme --kb handbook --lexical-only
+```
+
+`snapshot` atomically publishes a complete live corpus; it is a full
+replacement, not a delta update. Use `cairn doctor` before connecting a real
+embedding provider or object gateway.
+
+To serve a knowledge base over HTTP:
+
+```bash
 export CAIRN_SERVER_TOKEN="$(openssl rand -hex 32)"
 cairn serve --listen 127.0.0.1:18080
-
-# 2. Install the plugin into a DeepSeek Harness profile
-./scripts/install_dsh_bundle.sh web
-# or: dsh plugin --profile web add dist/cairn-uqa-dsh-1.0.0.tgz
-
-# 3. Smoke-test the mount
-cairn-dsh-doctor --query "cold search"
 ```
 
-Point the mount at your server in the profile's `cordis.patch.yml` (copy from `examples/deepseek-harness.profile.patch.yml`):
+Search responses report execution mode (`cold` or `warm`), retrieval mode
+(`lexical`, `hybrid`, or `vector`), calibrated score, embedding provenance,
+corpus digest, and revision-pinned `cairn://` citations.
 
-```yaml
-- id: cairn-uqa-retrieval
-  config:
-    baseUrl: http://127.0.0.1:18080
-    tenant: acme
-    knowledgeBase: handbook
-    toolName: cairn_search
-    tokenEnv: CAIRN_SERVER_TOKEN
-```
+## Index past coding-agent work
 
-The agent can now call `cairn_search`:
-
-```json
-{ "query": "why is R2 the durable source of truth?", "limit": 6, "filters": { "lang": "en" } }
-```
-
-Every result carries immutable provenance — revision, embedding provider/model/dimension, corpus SHA-256, cold/warm execution mode, lexical/hybrid/vector retrieval mode, calibrated score, and a `cairn://acme/handbook/revision/2/chunk/…` citation that stays valid even as the corpus evolves.
-
-`SearchResponse.mode` describes where execution ran (`cold` or `warm`).
-`SearchResponse.retrieval_mode` separately reports `lexical`, `hybrid`, or
-`vector`, and `query_embedding_fallback` says whether an eligible text query
-fell back to lexical retrieval because a compatible query embedder was
-unavailable or failed. An explicit `--lexical-only` server is intentional
-lexical retrieval and therefore does not set the fallback flag.
-
-### Session memory: continue past agent work
-
-Index the JSONL session stores that local coding agents already write — DeepSeek Harness (`~/.dsh`), Senpi/pi (`~/.senpi`, `~/.pi`), Codex (`~/.codex`), Claude Code (`~/.claude`) — and query them as first-class Harness tools:
+The importer is read-only against local session stores. It redacts secrets
+before writing normalized JSONL and defaults to the privacy-safe metadata tier.
+Use `--tier transcript` only when message windows are needed for recall.
 
 ```bash
-# Read-only, redacting, idempotent. Always run indexing in the background.
+# Discover supported local session stores.
 python3 scripts/session_import.py --discover --json
-python3 scripts/session_import.py --out .cairn/session-chunks.jsonl   # add --tier transcript to opt into message windows
 
-# Publish, then mount examples/deepseek-harness.sessions.patch.yml in the profile
-cairn embed .cairn/session-chunks.jsonl -o .cairn/session-chunks-embedded.jsonl --missing-only
-cairn ingest .cairn/session-chunks-embedded.jsonl --tenant local --kb sessions --dev-calibration
+# Import in the background; this is safe to resume.
+mkdir -p .cairn/agent-run
+nohup python3 scripts/session_import.py \
+  --out .cairn/session-chunks.jsonl \
+  --checkpoint .cairn/session-import-checkpoint.json \
+  --tier transcript \
+  --json > .cairn/agent-run/session-import.log 2>&1 &
+
+# Embed and publish a new immutable sessions revision.
+cairn embed .cairn/session-chunks.jsonl \
+  --out .cairn/session-chunks-embedded.jsonl \
+  --missing-only
+cairn snapshot .cairn/session-chunks-embedded.jsonl \
+  --tenant local \
+  --kb sessions \
+  --dev-calibration
+
+cairn search "find the session where we debugged deployment" \
+  --tenant local \
+  --kb sessions
 ```
 
-That gives the agent two more tools:
-
-| Tool | Use |
-| --- | --- |
-| `cairn_search_sessions` | "find the session where we debugged the elyn-server deploy" — filtered by harness, repo, branch, time |
-| `cairn_session_packet` | exact `session_uid` → a bounded, `seq_start`-ordered continuation packet with lineage (cwd, branch, model, usage) and a revision-drift verdict against current HEAD |
-
-The packet path is not approximate search. It first pins current HEAD, then
-uses `POST /v1/{tenant}/kb/{kb}/chunks/by-id-prefix` with
-`id_prefix: "s:<session_uid>:"` and `order_by: "seq_start"`. The endpoint
-scans compact chunk-id blocks, honors tombstones and remote-I/O budgets, loads
-payloads only for matching ids, and allows an explicit current-HEAD pin while
-still rejecting older revisions unless historical access is enabled.
-
-Retrieved sessions are fenced as **untrusted evidence** (`BEGIN_UNTRUSTED_CAIRN_EVIDENCE`): reference data, never instructions. The full contract is in [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md).
-
-### Revision-safe embedding provenance correction
-
-`cairn snapshot` and `cairn publish --replace-shards` are explicit full-shard
-replacement operations. They may update embedding provider/model provenance
-even when a deterministic rebuild produces byte-identical,
-content-addressed shard keys. Ordinary/delta `publish` remains conservative:
-if any parent shard key is inherited, changing provider, model, or dimension
-is rejected. Reference validation and the manifest/HEAD CAS publication
-sequence remain identical in both paths.
-
-When the JSONL already contains vectors produced by OpenRouter, correct the
-manifest provenance without another embedding API call:
-
-```bash
-cairn snapshot chunks-embedded.jsonl \
-  --no-embed \
-  --embedding-provider openrouter \
-  --embedding-model Qwen/Qwen3-Embedding-8B \
-  --shards 8
-```
+Imported sessions are **untrusted evidence**, never instructions. CAIRN keeps
+their lineage and sequence order so an agent can retrieve a concise,
+revision-safe continuation packet instead of reopening raw transcript files.
+See [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) for the schema, privacy
+boundary, packet contract, and revision-drift behavior.
 
 ## Web console
 
-A same-origin browser console (`web/`) ships with the plugin story: the bearer token never leaves the server, and every answer shows revision, corpus digest, and citations.
+The same-origin browser console in `web/` keeps the bearer token server-side
+and shows revision, corpus digest, and citations beside every result.
 
 | Connection health | Hybrid search workbench |
 | --- | --- |
@@ -130,37 +165,29 @@ CAIRN_WEB_PORT=18787 \
 npm --prefix web start
 ```
 
-## Why a native plugin (not a shell command)
+## Optional warm execution
 
-- **Trusted config vs. model arguments.** Base URL, token env, tenant/KB, fixed authorization filters, and all budgets live in operator-controlled profile config. The model only supplies `query`, bounded `limit`, and allowlisted `filters`; unknown arguments are rejected outright.
-- **Namespace fencing.** `cairn serve --restrict-to-default-scope` binds the sidecar to one tenant/KB as a second authorization fence; `/head`, `/search`, and `/chunks/by-id-prefix` require the bearer token when `CAIRN_SERVER_TOKEN` is set.
-- **Structured failures.** CAIRN returns machine-readable errors (`INVALID_REQUEST`, `SEARCH_FAILED`, `retryable`, `request_id`); the plugin honors `retryable=false` even on 5xx and retries only idempotent reads with call-scoped abort.
-- **Bounded evidence.** Response bytes, per-hit text, total text, and metadata keys are capped and validated with integer semantics — no unbounded context injection.
+CAIRN can run inside a UQA-RS checkout for persistent warm indexes and faster
+repeated queries. This is opt-in: the standalone build has no UQA dependency.
+See [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) for the supported version
+boundary, feature flags, and exact build/test commands.
 
-## Optional: UQA-RS warm execution
-
-CAIRN can run as the retrieval plane inside a UQA-RS checkout for warm execution (persistent indexes, faster repeated queries). This is strictly opt-in: the standalone build has no UQA dependency, and the UQA integration pins sibling crates through a separate manifest (`Cargo.uqa.toml`) so plain checkouts always build. See [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) for the supported UQA-RS version floor, feature flags, and exact build/test commands (`cargo test --manifest-path Cargo.uqa.toml --all-targets --features uqa`).
-
-## For coding agents
-
-Everything an autonomous agent needs — install, quality gates, background-first indexing, server/web runbooks, DSH profile wiring, safety rails — is in [AGENTS.md](AGENTS.md). Key gates:
+## Verify a checkout
 
 ```bash
 make check                                                   # Rust fmt/tests/clippy + static validation
 python3 -m unittest discover -s scripts/cairn_sessions/tests # importer suite
 npm --prefix web run check                                   # web typecheck + tests
-npm --prefix integrations/deepseek-harness run check:offline # plugin tests + pack dry-run
 ```
 
-## Docs map
+## Docs
 
 | File | Contents |
 | --- | --- |
-| [AGENTS.md](AGENTS.md) | Agent operating guide: install → index (always background) → run → verify |
-| [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) | Session import schema, privacy boundary, packet contract |
-| [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) | UQA-RS version boundary and warm-execution gates |
+| [AGENTS.md](AGENTS.md) | Autonomous setup, background indexing, server runbook, and quality gates |
+| [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) | Session import schema, privacy boundary, and continuation packets |
+| [UQA_COMPATIBILITY.md](UQA_COMPATIBILITY.md) | UQA-RS boundary and warm-execution gates |
 | [DESIGN.md](DESIGN.md) | Web console design system |
-| [integrations/deepseek-harness/README.md](integrations/deepseek-harness/README.md) | Bundle package reference |
 
 ## License
 
