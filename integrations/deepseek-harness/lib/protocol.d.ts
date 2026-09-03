@@ -9,6 +9,8 @@ export interface CairnSearchHit {
     readonly lexicalEvidence: number;
     readonly vectorEvidence: number;
     readonly text: string;
+    /** True when `text` is a bounded preview; fetch the full chunk by id. */
+    readonly textTruncated: boolean;
     readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 export interface CairnSearchResponse {

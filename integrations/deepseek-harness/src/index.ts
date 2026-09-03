@@ -17,7 +17,7 @@ export const inject = ['tools']
 const DEFAULT_METADATA_KEYS = ['title', 'source', 'path', 'url', 'page', 'section', 'lang'] as const
 const TOOL_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const SAFE_SCOPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
-const ALLOWED_ARGS = new Set(['query', 'limit', 'filters'])
+const ALLOWED_ARGS = new Set(['query', 'limit', 'filters', 'require_text'])
 const ALLOWED_SESSION_ARGS = new Set(['session_uid', 'limit'])
 const SESSION_UID = /^[^\x00-\x1f\x7f]{1,256}$/u
 const TRUST = 'untrusted_retrieval_evidence' as const
@@ -83,7 +83,7 @@ export const Config = z.object<Config>({
 })
 
 type Resolved = Required<Config>
-type ToolArgs = { readonly query: string; readonly limit?: number; readonly filters?: Record<string, JsonValue> }
+type ToolArgs = { readonly query: string; readonly limit?: number; readonly filters?: Record<string, JsonValue>; readonly require_text?: readonly string[] }
 type SessionToolArgs = { readonly session_uid: string; readonly limit?: number }
 type ToolHit = {
   readonly id: string
@@ -183,6 +183,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       query: { type: 'string', required: true, description: 'Focused standalone natural-language retrieval query.' },
       limit: { type: 'integer', description: `Number of hits, 1..${resolved.maxLimit}.` },
       filters: { type: 'object', additionalProperties: true, description: 'Optional exact-match metadata filters.' },
+      require_text: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional exact-verification literals; a hit is kept only if its text contains every one of them (case-insensitive). Use when you already know an identifier, error string, or config key and want to confirm where it appears. Leave unset for open-ended discovery, and drop it if it returns nothing rather than guessing more spellings.',
+      },
     },
     output: {
       schema: {
@@ -219,8 +224,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ? validateFilters(args.filters ?? {})
         : rejectDisabledFilters(args.filters)
       const filters = { ...modelFilters, ...fixedFilters }
+      const requireText = validateRequireText(args.require_text)
       const candidateLimit = Math.min(resolved.maxCandidateLimit, Math.max(limit, limit * resolved.candidateMultiplier))
-      const response = await client.search({ query, limit, candidateLimit, filters, callId: exec.callId }, exec.signal)
+      const response = await client.search({ query, limit, candidateLimit, filters, requireText, callId: exec.callId }, exec.signal)
       let remaining = resolved.maxTotalTextChars
       let truncated = false
       const hits: ToolHit[] = []
@@ -461,6 +467,21 @@ function validateSessionUid(value: unknown): string {
   const sessionUid = value.trim()
   if (!SESSION_UID.test(sessionUid)) throw new Error('session_uid must contain 1..=256 characters and no control characters')
   return sessionUid
+}
+
+/** Mirrors the server's require_text bounds so a malformed model argument
+ *  fails locally with a clear message instead of as a remote 400. */
+function validateRequireText(value: readonly string[] | undefined): readonly string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error('require_text must be an array of strings')
+  if (value.length > 16) throw new Error('require_text accepts at most 16 literals')
+  for (const needle of value) {
+    if (typeof needle !== 'string') throw new Error('require_text entries must be strings')
+    const bytes = new TextEncoder().encode(needle).byteLength
+    // An empty literal matches every document and silently disables verification.
+    if (bytes === 0 || bytes > 4096) throw new Error('require_text entries must be 1..=4096 bytes')
+  }
+  return [...value]
 }
 
 function integerWithin(value: number, min: number, max: number, label: string): number {

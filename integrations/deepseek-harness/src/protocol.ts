@@ -8,6 +8,8 @@ export interface CairnSearchHit {
   readonly lexicalEvidence: number
   readonly vectorEvidence: number
   readonly text: string
+  /** True when `text` is a bounded preview; fetch the full chunk by id. */
+  readonly textTruncated: boolean
   readonly metadata: Readonly<Record<string, JsonValue>>
 }
 
@@ -115,6 +117,12 @@ export function decodeSearchResponse(
       lexicalEvidence: finite(hit.lexical_evidence, `hits[${index}].lexical_evidence`),
       vectorEvidence: finite(hit.vector_evidence, `hits[${index}].vector_evidence`),
       text: string(hit.text, `hits[${index}].text`, 16 * 1024 * 1024),
+      // Absent on servers predating the context budget: a missing flag means
+      // the server always returns full text.
+      textTruncated:
+        hit.text_truncated === undefined
+          ? false
+          : boolean(hit.text_truncated, `hits[${index}].text_truncated`),
       metadata: metadata(hit.metadata, `hits[${index}].metadata`, options.maxMetadataBytesPerHit),
     }
   })

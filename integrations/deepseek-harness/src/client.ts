@@ -25,6 +25,8 @@ export interface SearchInput {
   readonly limit: number
   readonly candidateLimit: number
   readonly filters: Readonly<Record<string, JsonValue>>
+  /** Literals that must appear verbatim in a hit's chunk text. */
+  readonly requireText?: readonly string[]
   readonly callId?: string
 }
 
@@ -130,6 +132,9 @@ export class CairnClient {
         limit: input.limit,
         candidate_limit: input.candidateLimit,
         filters: input.filters,
+        ...(input.requireText !== undefined && input.requireText.length > 0
+          ? { require_text: input.requireText }
+          : {}),
       }),
     }, signal)
     return decodeSearchResponse(value, {

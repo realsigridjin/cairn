@@ -89,6 +89,9 @@ export class CairnClient {
                 limit: input.limit,
                 candidate_limit: input.candidateLimit,
                 filters: input.filters,
+                ...(input.requireText !== undefined && input.requireText.length > 0
+                    ? { require_text: input.requireText }
+                    : {}),
             }),
         }, signal);
         return decodeSearchResponse(value, {

@@ -16,6 +16,8 @@ export interface SearchInput {
     readonly limit: number;
     readonly candidateLimit: number;
     readonly filters: Readonly<Record<string, JsonValue>>;
+    /** Literals that must appear verbatim in a hit's chunk text. */
+    readonly requireText?: readonly string[];
     readonly callId?: string;
 }
 export declare class CairnClientError extends Error {
