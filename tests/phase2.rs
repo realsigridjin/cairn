@@ -28,6 +28,9 @@ fn request(query: &str, vector: Vec<f32>) -> SearchRequest {
         candidate_limit: 16,
         revision: None,
         filters: BTreeMap::new(),
+        require_text: Vec::new(),
+        require_text_case_sensitive: false,
+        max_text_bytes: 0,
         max_remote_bytes: 256 * 1024 * 1024,
         max_range_reads: 4096,
     }

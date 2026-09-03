@@ -396,6 +396,17 @@ struct SearchArgs {
     /// Metadata filters as JSON object.
     #[arg(long)]
     filters: Option<String>,
+    /// Exact-verification leg: keep only hits whose text literally contains
+    /// this string. Repeat the flag to require several literals at once.
+    #[arg(long = "require-text")]
+    require_text: Vec<String>,
+    /// Match --require-text case-sensitively (default: case-insensitive).
+    #[arg(long)]
+    require_text_case_sensitive: bool,
+    /// Context budget: return at most this many UTF-8 bytes of text per hit,
+    /// cut on a character boundary. 0 (default) returns the full chunk text.
+    #[arg(long, default_value_t = 0)]
+    max_text_bytes: usize,
     #[arg(long, default_value_t = 256 * 1024 * 1024)]
     max_remote_bytes: u64,
     #[arg(long, default_value_t = 4096)]
@@ -1516,6 +1527,9 @@ async fn search(
         candidate_limit: args.candidates,
         revision: args.revision,
         filters,
+        require_text: args.require_text,
+        require_text_case_sensitive: args.require_text_case_sensitive,
+        max_text_bytes: args.max_text_bytes,
         max_remote_bytes: args.max_remote_bytes,
         max_range_reads: args.max_range_reads,
     };

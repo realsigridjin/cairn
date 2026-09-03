@@ -9,6 +9,7 @@ use crate::manifest::ShardDescriptor;
 use crate::model::{ChunkLookupHit, RevisionStats, SearchHit, SearchRequest};
 use crate::object_store::ObjectStore;
 use crate::search::fusion::merge_evidence;
+use crate::search::verify::TextVerifier;
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -316,10 +317,13 @@ impl ColdShardReader {
             )
             .await?;
         let payloads = self.payloads(dir, meta, ranked.iter().map(|x| x.0)).await?;
+        // Verification runs on the full payload text, before `limit`
+        // truncation, so narrowing costs recall no matching document.
+        let verifier = TextVerifier::new(req);
         let mut hits = Vec::with_capacity(req.limit.max(1));
         for (doc_idx, e, score, posterior) in ranked {
             if let Some(p) = payloads.get(&doc_idx) {
-                if metadata_matches(&p.metadata, &req.filters) {
+                if metadata_matches(&p.metadata, &req.filters) && verifier.verify(&p.text) {
                     hits.push(SearchHit {
                         id: p.id.clone(),
                         score,
@@ -327,6 +331,7 @@ impl ColdShardReader {
                         lexical_evidence: e.lexical,
                         vector_evidence: e.vector,
                         text: p.text.clone(),
+                        text_truncated: false,
                         metadata: p.metadata.clone(),
                     });
                     if hits.len() >= req.limit.max(1) {

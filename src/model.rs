@@ -244,6 +244,30 @@ pub struct SearchRequest {
     pub revision: Option<u64>,
     #[serde(default)]
     pub filters: BTreeMap<String, serde_json::Value>,
+    /// Exact-verification leg. A candidate is retained only when its chunk
+    /// text literally contains every one of these needles. Lexical BM25
+    /// scoring is tokenized and therefore cannot verify a literal such as
+    /// `hydratePreferences(`; this filter closes the
+    /// discovery -> narrowing -> verification loop inside one request. It is
+    /// applied next to metadata filtering, always against the untruncated
+    /// chunk text, and before `limit` truncation so recall is preserved.
+    #[serde(default)]
+    pub require_text: Vec<String>,
+    /// Match `require_text` case-sensitively. Default is case-insensitive,
+    /// which is the useful default for natural-language and prose corpora.
+    #[serde(default)]
+    pub require_text_case_sensitive: bool,
+    /// Context budget: maximum UTF-8 bytes of chunk text returned per hit,
+    /// truncated on a character boundary and flagged by
+    /// [`SearchHit::text_truncated`]. `0` disables truncation.
+    ///
+    /// A ranked list is usually consumed to decide *what to read*, so shipping
+    /// every full chunk spends caller context on text that is never used. The
+    /// untruncated chunk stays addressable by id through the chunk-lookup
+    /// point-read path. Purely response shaping: scoring, metadata filtering
+    /// and exact verification all run against the full text first.
+    #[serde(default)]
+    pub max_text_bytes: usize,
     /// Hard cold-path object-store budget, including revision stats and
     /// tombstones on cache misses. Prevents a pathological query from turning
     /// into unbounded range-read cost.
@@ -290,6 +314,18 @@ impl SearchRequest {
         );
         anyhow::ensure!(self.filters.len() <= 64, "too many metadata filters");
         anyhow::ensure!(
+            self.require_text.len() <= MAX_REQUIRE_TEXT_NEEDLES,
+            "at most {MAX_REQUIRE_TEXT_NEEDLES} require_text needles are supported"
+        );
+        for needle in &self.require_text {
+            // An empty needle is satisfied by every document, which silently
+            // turns a verification request into a no-op.
+            anyhow::ensure!(
+                !needle.is_empty() && needle.len() <= MAX_REQUIRE_TEXT_BYTES,
+                "require_text needles must be in 1..={MAX_REQUIRE_TEXT_BYTES} bytes"
+            );
+        }
+        anyhow::ensure!(
             (1024 * 1024..=4 * 1024 * 1024 * 1024u64).contains(&self.max_remote_bytes),
             "max_remote_bytes must be in 1MiB..=4GiB"
         );
@@ -315,6 +351,12 @@ impl SearchRequest {
         Ok(())
     }
 }
+
+/// Bounds for the exact-verification leg. Verification runs against full chunk
+/// text for every candidate, so both the needle count and needle size stay
+/// bounded to keep the per-candidate cost predictable.
+const MAX_REQUIRE_TEXT_NEEDLES: usize = 16;
+const MAX_REQUIRE_TEXT_BYTES: usize = 4096;
 
 fn default_limit() -> usize {
     20
@@ -451,7 +493,30 @@ pub struct SearchHit {
     pub lexical_evidence: f32,
     pub vector_evidence: f32,
     pub text: String,
+    /// True when `text` was shortened by the request's `max_text_bytes`
+    /// budget. The full chunk remains retrievable by `id` through chunk
+    /// lookup, so a truncated preview is never a lossy dead end.
+    #[serde(default)]
+    pub text_truncated: bool,
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+impl SearchHit {
+    /// Apply the response-side context budget, truncating `text` on a UTF-8
+    /// character boundary so a multi-byte glyph is never split. `0` disables
+    /// truncation. Called after ranking, filtering and verification: this
+    /// shapes only what crosses the wire, never which documents match.
+    pub fn apply_text_budget(&mut self, max_text_bytes: usize) {
+        if max_text_bytes == 0 || self.text.len() <= max_text_bytes {
+            return;
+        }
+        let mut end = max_text_bytes;
+        while end > 0 && !self.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.text.truncate(end);
+        self.text_truncated = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

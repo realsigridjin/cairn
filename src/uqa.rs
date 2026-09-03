@@ -111,9 +111,12 @@ fn search_uqa_blocking(
         }
     }
 
+    // The warm path must narrow identically to the cold path: a verified hit
+    // has to mean the same thing regardless of which engine served it.
+    let verifier = crate::search::verify::TextVerifier::new(req);
     let mut hits = Vec::new();
     for (id, c) in candidates {
-        if !metadata_matches(&c.metadata, &req.filters) {
+        if !metadata_matches(&c.metadata, &req.filters) || !verifier.verify(&c.text) {
             continue;
         }
         let mut evidence = Evidence::default();
@@ -141,6 +144,7 @@ fn search_uqa_blocking(
             lexical_evidence: evidence.lexical,
             vector_evidence: evidence.vector,
             text: c.text,
+            text_truncated: false,
             metadata: c.metadata,
         });
     }

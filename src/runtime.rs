@@ -210,7 +210,13 @@ impl CairnRuntime {
                         )
                         .await
                         {
-                            Ok(hits) => {
+                            Ok(mut hits) => {
+                                // Shape the wire payload only after ranking,
+                                // filtering and verification have run on full
+                                // text, identically to the cold path below.
+                                for hit in &mut hits {
+                                    hit.apply_text_budget(req.max_text_bytes);
+                                }
                                 return Ok(SearchResponse {
                                     revision: manifest.revision,
                                     embedding_provider: manifest.embedding_provider.clone(),
@@ -222,7 +228,8 @@ impl CairnRuntime {
                                     query_embedding_fallback,
                                     score_domain: ScoreDomain::RevisionCalibratedLogOdds,
                                     approximate: !req.query_vector.is_empty()
-                                        || !req.filters.is_empty(),
+                                        || !req.filters.is_empty()
+                                        || !req.require_text.is_empty(),
                                     hits,
                                     remote_bytes: stats_bytes
                                         .saturating_add(lease.downloaded_bytes()),
@@ -255,6 +262,9 @@ impl CairnRuntime {
             .await?;
         response.remote_bytes = response.remote_bytes.saturating_add(stats_bytes);
         response.range_reads = response.range_reads.saturating_add(stats_reads);
+        for hit in &mut response.hits {
+            hit.apply_text_budget(req.max_text_bytes);
+        }
 
         if crate::uqa::warm_execution_enabled() {
             if let Some(bundle) = &manifest.uqa_bundle {
@@ -689,7 +699,11 @@ impl CairnRuntime {
             retrieval_mode,
             query_embedding_fallback,
             score_domain: ScoreDomain::RevisionCalibratedLogOdds,
-            approximate: !req.query_vector.is_empty() || !req.filters.is_empty(),
+            // Metadata filtering and exact verification both run after a
+            // bounded candidate pool, so neither can promise an exact top-k.
+            approximate: !req.query_vector.is_empty()
+                || !req.filters.is_empty()
+                || !req.require_text.is_empty(),
             hits,
             remote_bytes,
             range_reads,
